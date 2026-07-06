@@ -1,0 +1,38 @@
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: routing-engine-postgis
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-routing_engine}
+      POSTGRES_USER: ${POSTGRES_USER:-routing_engine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-routing_engine_dev_password}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-routing_engine} -d ${POSTGRES_DB:-routing_engine}
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./db/seed:/seed:ro
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    # Not exposed to the host on purpose: only the web container talks to the DB directly.
+
+  web:
+    build: ./backend
+    container_name: routing-engine-web
+    restart: unless-stopped
+    depends_on:
+      postgis:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-routing_engine}:${POSTGRES_PASSWORD:-routing_engine_dev_password}@postgis:5432/${POSTGRES_DB:-routing_engine}
+      ENABLE_TEST_ENDPOINTS: ${ENABLE_TEST_ENDPOINTS:-false}
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+
+volumes:
+  postgis_data:
