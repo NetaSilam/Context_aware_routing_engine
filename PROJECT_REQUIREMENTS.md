@@ -3,7 +3,7 @@
 **Course:** Software Engineering for ML (Spring 2026)
 **Team:** Neta Silam (211569637), Rotem Borenstein (211620570), Yam Ben Tov (314745860)
 **Foundation repo (data/mapping pipeline, reused as an input — not the project repo):** [github.com/RotemBorenstein/Context-Aware-Safe-Routing-Engine](https://github.com/RotemBorenstein/Context-Aware-Safe-Routing-Engine)
-**Project repo:** not created yet — see §0.1
+**Project repo:** [github.com/NetaSilam/Context_aware_routing_engine](https://github.com/NetaSilam/Context_aware_routing_engine) (scaffolded — compose.yaml, seed-loading Postgres/PostGIS, minimal FastAPI backend)
 **Presentation:** 2026-07-16 (10 days out) — needs a demo-able MVP
 **Final submission:** 2026-08-23
 
@@ -183,6 +183,50 @@ ranked:
 Recommendation: build option 1 for the MVP; keep option 3 in your back pocket as the
 "complexity and creativity" talking point in the final report even if you don't ship it.
 
+**Geocoding (a step before any of the above):** OSRM only accepts coordinates, not
+free-text addresses, so a user typing "Dizengoff 100, Tel Aviv" needs an address → lat/lon
+step first. Don't use the public Nominatim demo server for this — its usage policy caps
+you at ~1 req/sec and explicitly forbids autocomplete/heavy use, which collides directly
+with the guidelines' promised manual stress test ("send 999999999 requests to some
+endpoint"). Self-host Nominatim in Docker instead, built from the same Israel `.osm.pbf`
+extract already used for `canonical_network`/OSRM — free, no rate limit, one more
+self-contained container consistent with the rest of the stack. Flow: address text →
+`POST /geocode` on your backend → local Nominatim → candidate coordinates (disambiguate if
+multiple matches) → user confirms → `POST /route` with those coordinates → OSRM → Worker A/B.
+
+### 1.4 Influencing OSRM's route with risk data + user preferences
+
+OSRM does **not** accept a custom cost/weight per request — its routing cost function is
+baked into the graph offline (`osrm-extract`/`osrm-contract`, driven by a static Lua
+profile), not something you can inject at query time. So Worker A/B has to sit as a
+**layer on top of OSRM**, not a patch inside it. Three mechanisms, each for a different job:
+
+1. **Hard user preferences (avoid tolls/highways) → OSRM's native `exclude=` param.**
+   The standard `car.lua` profile already defines excludable classes (`motorway`, `toll`,
+   etc.), chosen per request:
+   `GET /route/v1/driving/{coords}?exclude=motorway,toll&alternatives=true`.
+   This maps directly onto the Long-Term Memory preferences in §4.2 — free, built-in, no
+   graph rebuild needed.
+2. **Risk-based ranking → re-rank OSRM's `alternatives`, don't fight OSRM for it.**
+   Request `alternatives=true` (returns ~2-4 candidates, and only if OSRM judges them
+   "reasonably different" from the fastest — for some origin/destination pairs there may
+   be only one route on offer; call that limitation out explicitly in the report rather
+   than overselling it). For each candidate, snap its geometry onto the corridor layer
+   (reusing `accident_attribution`'s nearest-corridor matching) to get `S(R) = ΣC(i)/ΣL(i)`,
+   combine with OSRM's `duration` for `NormalizedTime(R)`, and pick the route minimizing
+   `Cost(R) = Wtime·NormalizedTime(R) + Wsafe·NormalizedRisk(R)`. This is genuinely a
+   *selection* among OSRM's own candidates, not a modification of OSRM's search.
+3. **(Stretch, not Phase 1) Risk-weighted OSRM profiles.** For OSRM itself to physically
+   route around dangerous roads rather than just picking among what it already offered,
+   you'd inject a `risk_score` tag per way into the `.osm.pbf` (derived from
+   `accident_attribution`) and write a custom Lua profile that inflates `weight` (not
+   `speed`) accordingly — then rebuild the graph. Because `Wsafe` is personalized
+   per-request (driving experience, vehicle type, day/night), you can't bake a continuous
+   per-user weight into a single static graph; the practical version is 2-3 discretized
+   profiles (e.g. normal / cautious / very-cautious), chosen by bucketing the user's
+   computed `Wsafe`, each requiring its own prebuilt OSRM graph. Worth a mention in the
+   report's "complexity and creativity" section even if only options 1-2 ship.
+
 ---
 
 ## 2. Resolving the TA's feedback on the proposal
@@ -238,20 +282,25 @@ started to drain the queue under load).
 ### 4.1 Core Routing Engine — 60 pts (from the proposal)
 
 **Must have:**
-- `POST /route`: accepts origin/destination, calls the new OSRM container (§1.3) for alternative routes + ETA.
+- `POST /geocode`: address text → candidate coordinates via self-hosted Nominatim (§1.3).
+- `POST /route`: accepts origin/destination coordinates, calls the new OSRM container
+  (§1.3) with `exclude=` set from the user's stored hard preferences (§4.2) and
+  `alternatives=true` for candidate routes + ETA (§1.4).
 - Worker A: snaps each OSRM route's coordinates onto the existing corridor layer (reusing
   the nearest-corridor matching already implemented in `accident_attribution/assign.py`)
   to pull historical accident counts `C(i)` per corridor; builds the user's risk context
   (experience, vehicle type, day/night).
 - Worker B: computes `S(R) = ΣC(i)/ΣL(i)`, derives `Wsafe`/`Wtime` from the risk context,
-  returns the route minimizing `Cost(R) = Wtime·NormalizedTime(R) + Wsafe·NormalizedRisk(R)`.
+  returns the route minimizing `Cost(R) = Wtime·NormalizedTime(R) + Wsafe·NormalizedRisk(R)`
+  among whatever alternatives OSRM returned (§1.4 — note the "OSRM may return only one
+  candidate" limitation there, and don't overclaim otherwise in the report).
 - JWT-based auth (new — doesn't exist yet); only authenticated users can request personalized routes.
-- Redis-backed rate limiting on `/route` and all other client-facing endpoints.
+- Redis-backed rate limiting on `/route`, `/geocode`, and all other client-facing endpoints.
 
 **Constraints:**
-- Workers, Redis, and MongoDB are not reachable from outside the Docker network; only the
-  web gateway is exposed.
-- OSM timeouts must degrade gracefully (503, not a crash).
+- Workers, Redis, and the database are not reachable from outside the Docker network; only
+  the web gateway is exposed.
+- OSM/OSRM/Nominatim timeouts must degrade gracefully (503, not a crash).
 
 ### 4.2 Long-Term Memory — 10 pts
 
@@ -306,7 +355,7 @@ without manual refresh — WebSocket or SSE from the web gateway.
 - **Security:** bcrypt (or equivalent) password hashing, never plaintext. Only the web
   gateway container exposes ports. Auth required before any personalized/write endpoint.
 - **Persistence:** all state that matters (accounts, profiles, accident data, forum
-  content, DMs) lives in MongoDB, not in memory.
+  content, DMs) lives in PostgreSQL/PostGIS, not in memory.
 - **Testing:** unit, integration, system/E2E, stress, and security tests for every
   feature you claim to have tested — no partial/fake tests (`assertEqual(x, 405)` when it
   should be 200 is an explicit example of what gets you penalized). Use an
@@ -345,17 +394,18 @@ without manual refresh — WebSocket or SSE from the web gateway.
 
 ### Phase 0 — Now → Jul 9 (stand up the new repo, port the foundation, close gaps)
 - [x] Accident dataset acquired, cleaned, and geocoded (`foundation_data` + `accident_attribution`, in the foundation repo) — this resolves §6.1's blocking concern; just confirm the ~30k figure against the actual row count for the report.
-- [ ] Create the new project repository (private) — this is where grading, CI/CD, and all new features live from now on.
-- [ ] §0.1 step 1: `pg_dump` the foundation repo's PostGIS schema/data into a seed file; wire it into the new repo's `compose.yaml` via `docker-entrypoint-initdb.d`.
+- [x] Create the new project repository (private): [NetaSilam/Context_aware_routing_engine](https://github.com/NetaSilam/Context_aware_routing_engine).
+- [x] Local scaffold pushed: `compose.yaml` (postgis + web), `db/init/01-load-seed.sh` (auto-restores a seed dump via `docker-entrypoint-initdb.d` if present, no-ops otherwise), `db/seed/README.md`, minimal FastAPI backend (`/health`, `/health/db`), `.env.example`, `.gitignore`, root `README.md`.
+- [ ] §0.1 step 1 (remaining): actually export the foundation repo's PostGIS schema/data with `pg_dump` and drop it at `db/seed/road_risk_mapper.dump`, then verify `docker compose up` restores it and `/health/db` (and a real row-count check) pass.
 - [ ] §0.1 step 2: port `canonical_network`/`accident_attribution`/`traffic_coverage` API routes + repositories/services/schemas (and their tests) into the new repo's backend.
 - [ ] §6.2/§6.4: send the confirmation email to the TA (LLM wording + forum reinterpretation) — still open.
-- [ ] Add root-level `README.md` to the **new** repo with run + test instructions (mandatory per the guidelines); link back to the foundation repo for provenance of the accident/road data.
-- [ ] Stand up the OSRM container from §1.3 in the new repo, against the Israel `.osm.pbf` extract the foundation repo already uses.
-- [ ] New repo's `compose.yaml`: postgis (seeded) + web + redis + OSRM at minimum; decide Option A vs. B from §3 for reliable job delivery.
+- [ ] Stand up the OSRM and Nominatim containers from §1.3 in the new repo, both against the same Israel `.osm.pbf` extract the foundation repo already uses.
+- [ ] Extend `compose.yaml` with redis + OSRM + Nominatim; decide Option A vs. B from §3 for reliable job delivery.
 - [ ] Data model additions on top of the ported Postgres/PostGIS schema: User, RoutePreference, HazardReport, Comment, Vote, DirectMessage, Notification.
 
 ### Phase 1 — Jul 9 → Jul 16 (MVP for the presentation)
-- [ ] Worker A: glue OSRM's route output to the existing corridor-matching logic to pull accident counts per candidate route.
+- [ ] `POST /geocode`: address text → candidate coordinates via the Nominatim container.
+- [ ] Worker A: glue OSRM's route output (with `exclude=` set from stored preferences) to the existing corridor-matching logic to pull accident counts per candidate route.
 - [ ] Worker B: risk density + cost function, returning a ranked route (this is the one piece of the original proposal's math that doesn't exist in the repo yet).
 - [ ] Auth: JWT login/signup (new — the current API has no auth at all).
 - [ ] `POST /route` end-to-end through the queue, with auth and rate limiting.
