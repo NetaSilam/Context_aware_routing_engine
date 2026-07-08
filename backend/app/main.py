@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
+from app.data_routes import router as data_router
 from app.db import check_connection, get_engine
 from app.seed import ensure_seeded
 
@@ -35,6 +36,8 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=503, detail=f"database unavailable: {exc}") from exc
         return {"status": "ok"}
+
+    app.include_router(data_router)
 
     return app
 
