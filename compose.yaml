@@ -17,8 +17,6 @@ services:
       start_period: 15s
     volumes:
       - postgis_data:/var/lib/postgresql/data
-      - ./db/seed:/seed:ro
-      - ./db/init:/docker-entrypoint-initdb.d:ro
     # Not exposed to the host on purpose: only the web container talks to the DB directly.
 
   web:
@@ -33,6 +31,10 @@ services:
       ENABLE_TEST_ENDPOINTS: ${ENABLE_TEST_ENDPOINTS:-false}
     ports:
       - "${WEB_PORT:-8000}:8000"
+    volumes:
+      # Read-only: the foundation pipeline's parquet/geoparquet exports, loaded into
+      # PostGIS on first startup by app/seed.py (see data/README.md for what's in here).
+      - ./data:/data:ro
 
 volumes:
   postgis_data:

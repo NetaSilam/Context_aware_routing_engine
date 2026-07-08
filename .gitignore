@@ -12,9 +12,10 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# Seed dump can be large; keep it out of git history until we pick a storage
-# location for it (course-provided storage, a release asset, etc.).
-db/seed/*.dump
+# Foundation pipeline data exports - large binary files, not committed yet
+# (see data/README.md, which stays tracked, for what belongs here)
+data/*.parquet
+data/*.geoparquet
 
 .DS_Store
 Thumbs.db

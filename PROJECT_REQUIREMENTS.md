@@ -71,33 +71,44 @@ service — the web container, Redis, and worker containers all still need to be
   instructions; `TODO.md`/`docs/` exist locally but are gitignored, so nothing in them is
   visible on GitHub today.
 
-### 0.1 How this becomes the new repo
+### 0.1 How this becomes the new repo — done for the data, pending for the serving code
 
-Don't re-run the heavy GIS pipeline (geopandas/shapely/PostGIS ETL) inside the new
-project's Docker build — it's slow, has a large dependency footprint, and the accident
-dataset is static, which works against the "runs first try on any computer" requirement.
-Instead, split what gets carried over into two different things:
+**Status: implemented.** `data/` now holds the foundation pipeline's actual parquet/geoparquet
+exports (added directly to this repo, with its own `data/README.md`), not a `pg_dump` as
+originally planned here — simpler, since it doesn't require a live Postgres instance to
+export from, just the artifact files. `backend/app/seed.py` loads them into PostGIS on
+first `web` container startup (checks row counts, skips if already seeded), writing into
+the **same schema/table names the foundation repo's backend queries use** —
+`canonical_network.canonical_corridors`, `canonical_network.official_segment_links`,
+`accident_attribution.accident_attributions`, `accident_attribution.accident_attribution_summary`,
+plus the upstream `foundation_data.*` tables — verified directly against
+`backend/app/repositories/{canonical_network,accident_attribution}.py` in the foundation
+repo so those files can be ported without renaming anything.
 
-1. **Pipeline output → a static seed, not live code.** Run the foundation pipeline once
-   (already done), then `pg_dump` the resulting PostGIS schema/tables (or export the
-   pipeline's parquet artifacts) and commit that dump into the new repo, e.g.
-   `db/seed/road_risk_mapper.dump`. The new repo's `postgis` service loads it via the
-   official Postgres image's `docker-entrypoint-initdb.d` mechanism on first boot — one
-   `docker compose up`, no pipeline re-run required. Keep the original repo around as the
-   place you'd go back to if the data ever needs regenerating; link to it in the new
-   repo's README for provenance, but don't depend on it at runtime or at grading time.
-2. **Serving/query code → port it, it's real application code.** `backend/app/api/routes/{canonical_network,accident_attribution,traffic_coverage}.py`
+**Known gap, found while checking this (don't assume a clean port):** the foundation
+repo's `list_corridors_in_bbox` query joins `canonical_corridors` against a
+`canonical_corridor_display` table (a simplified display geometry, per the foundation
+project's own docs), and `get_corridor_detail` left-joins `canonical_roads` — **neither
+table is in this `data/` export** (it's deliberately a reduced "non-traffic downstream
+artifacts" subset, per `data/README.md`). Two ways to close this when porting the serving
+layer (§0.1 step 2 below): (a) get the missing tables exported too, or (b) adapt those two
+queries to use `canonical_corridors.geometry` directly and drop the `canonical_roads` join
+— acceptable for this project's purposes, just means the map returns full-resolution
+geometry instead of a simplified display version, and corridor detail won't show road-level
+fields. The `canonical_network` `/summary` endpoint depends entirely on audit tables that
+also aren't in this export and won't work either way unless those are added.
+
+Remaining carryover work:
+
+1. **Serving/query code → port it, it's real application code.** `backend/app/api/routes/{canonical_network,accident_attribution,traffic_coverage}.py`
    and their matching `repositories/`/`services/`/`schemas/` modules are not batch ETL —
    they're the tested, working read API this project needs to show corridor/accident data
    on the map and to feed Worker A's risk lookup (§4.1). Copy these modules into the new
-   repo's backend as-is and keep their existing tests; this is the fastest path to a
-   credible Jul 16 demo, since a chunk of "Core Routing Engine" scaffolding is already done.
-3. **Frontend explorer pages → optional carryover.** The 3 existing map-explorer pages are
+   repo's backend, apply the adaptation from the gap above, and keep their existing tests
+   where they still apply.
+2. **Frontend explorer pages → optional carryover.** The 3 existing map-explorer pages are
    a nice-to-have (e.g. as an admin/debug view) but not required for the core user flow
    (request a route). Port them only if time allows after the route-request UI works.
-
-This also reshapes Phase 0 below: the "create the new GitHub repo" and "port the seed +
-serving layer" steps come first, before anything else.
 
 ---
 
@@ -123,7 +134,7 @@ strengthens the core pitch instead of being a bolted-on distraction:
 | Cold seeding | Pre-seed fake accounts + historical hazard reports so the feed looks alive |
 
 **Payoff beyond the checklist:** confirmed hazard reports become a second, *live* input
-into the same risk-scoring pipeline (Worker A/B) that today only reads the static 30k
+into the same risk-scoring pipeline (Worker A/B) that today only reads the static ~50k
 accident dataset. That gives a direct answer to the TA's feedback question about accident
 data availability — the static dataset is the historical baseline, the forum is the live
 supplement — and it's a genuine product idea, not decoration.
@@ -393,11 +404,12 @@ without manual refresh — WebSocket or SSE from the web gateway.
 ## 7. TODO list (phased, given the 2026-07-16 presentation and 2026-08-23 deadline)
 
 ### Phase 0 — Now → Jul 9 (stand up the new repo, port the foundation, close gaps)
-- [x] Accident dataset acquired, cleaned, and geocoded (`foundation_data` + `accident_attribution`, in the foundation repo) — this resolves §6.1's blocking concern; just confirm the ~30k figure against the actual row count for the report.
+- [x] Accident dataset acquired, cleaned, and geocoded (`foundation_data` + `accident_attribution`, in the foundation repo) — this resolves §6.1's blocking concern. **Correction:** actual seeded row count is **49,941** accidents, not ~30,000 as stated in the proposal — update the report to cite the real number.
 - [x] Create the new project repository (private): [NetaSilam/Context_aware_routing_engine](https://github.com/NetaSilam/Context_aware_routing_engine).
 - [x] Local scaffold pushed: `compose.yaml` (postgis + web), `db/init/01-load-seed.sh` (auto-restores a seed dump via `docker-entrypoint-initdb.d` if present, no-ops otherwise), `db/seed/README.md`, minimal FastAPI backend (`/health`, `/health/db`), `.env.example`, `.gitignore`, root `README.md`.
-- [ ] §0.1 step 1 (remaining): actually export the foundation repo's PostGIS schema/data with `pg_dump` and drop it at `db/seed/road_risk_mapper.dump`, then verify `docker compose up` restores it and `/health/db` (and a real row-count check) pass.
-- [ ] §0.1 step 2: port `canonical_network`/`accident_attribution`/`traffic_coverage` API routes + repositories/services/schemas (and their tests) into the new repo's backend.
+- [x] §0.1 step 1: `data/` parquet/geoparquet exports added; `backend/app/seed.py` loads them into PostGIS on first `web` startup. **Verified end-to-end** with `docker compose up --build`: `/health` and `/health/db` both return 200, all 8 tables seeded with real row counts (49,941 accidents, 362,922 corridors, 317,440 OSM roads, etc.), and re-running skips already-seeded tables (checked via a second `docker compose up`). One bug found and fixed in the process: `accident_attribution_summary`'s breakdown columns hold nested dict values that neither pandas nor psycopg can bind directly — `seed.py` now JSON-encodes those to text before insert.
+- [ ] Decide how to close the `canonical_corridor_display`/`canonical_roads` gap from §0.1 before porting (get the tables exported, or adapt the two queries).
+- [ ] §0.1 step 1 (remaining): port `canonical_network`/`accident_attribution`/`traffic_coverage` API routes + repositories/services/schemas (and their tests) into the new repo's backend.
 - [ ] §6.2/§6.4: send the confirmation email to the TA (LLM wording + forum reinterpretation) — still open.
 - [ ] Stand up the OSRM and Nominatim containers from §1.3 in the new repo, both against the same Israel `.osm.pbf` extract the foundation repo already uses.
 - [ ] Extend `compose.yaml` with redis + OSRM + Nominatim; decide Option A vs. B from §3 for reliable job delivery.

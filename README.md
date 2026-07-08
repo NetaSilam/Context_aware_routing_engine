@@ -10,19 +10,28 @@ architecture, and TODO list.
 ## Status
 
 Early scaffold. The accident/road-corridor data pipeline was built in a
-separate foundation project — see `db/seed/README.md` for how its output gets
-loaded into this project's database.
+separate foundation project (see `data/README.md` for what each file is);
+its parquet/geoparquet exports go in `data/` and are loaded into PostGIS
+automatically on first startup by `backend/app/seed.py`. **The data files
+themselves aren't committed yet** (see `data/README.md` and the team for how
+to get them) - `.gitignore` excludes `data/*.parquet`/`*.geoparquet` for now;
+without them the app still boots, it just has no rows in `foundation_data`,
+`canonical_network`, or `accident_attribution`.
 
 ## Running the app
 
 ```
 cp .env.example .env
+# Place the foundation pipeline's exports in data/ (see data/README.md) first.
 docker compose up --build
 ```
 
 - API: http://localhost:8000 (`/health`, `/health/db`)
-- The `postgis` service restores `db/seed/road_risk_mapper.dump` automatically
-  on first start if present (see `db/seed/README.md`).
+- On first startup, the `web` container loads `data/*.parquet`/`*.geoparquet`
+  into PostGIS (schemas `foundation_data`, `canonical_network`,
+  `accident_attribution`) if those tables are empty. Subsequent restarts skip
+  seeding since the tables are already populated. Verified locally: all 8
+  tables load with real row counts (49,941 accidents, 362,922 corridors, etc.).
 
 ## Running the tests
 
