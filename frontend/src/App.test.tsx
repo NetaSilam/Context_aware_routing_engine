@@ -21,4 +21,9 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Accident Attribution" }));
     expect(screen.getByText("Accident attribution page")).toBeTruthy();
   });
+
+  it("defaults to the Plan a Route page", () => {
+    render(<App pages={{ "plan-route": <div>Plan a route page</div> }} />);
+    expect(screen.getByText("Plan a route page")).toBeTruthy();
+  });
 });

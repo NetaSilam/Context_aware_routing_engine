@@ -1,4 +1,4 @@
-export type AppPageId = "canonical-network" | "accident-attribution";
+export type AppPageId = "plan-route" | "canonical-network" | "accident-attribution";
 
 interface PageSwitcherProps {
   activePage: AppPageId;
@@ -6,6 +6,7 @@ interface PageSwitcherProps {
 }
 
 const PAGES: Array<{ id: AppPageId; label: string }> = [
+  { id: "plan-route", label: "Plan a Route" },
   { id: "canonical-network", label: "Canonical Network" },
   { id: "accident-attribution", label: "Accident Attribution" },
 ];

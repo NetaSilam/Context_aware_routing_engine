@@ -5,6 +5,9 @@ GeoAlchemy2==0.17.1
 psycopg[binary]==3.2.9
 pytest==8.3.5
 httpx==0.28.1
+pydantic[email]==2.10.3
+bcrypt==4.2.1
+PyJWT==2.10.1
 
 # For loading the foundation pipeline's parquet/geoparquet seed data into PostGIS
 # (versions match the foundation repo's requirements-canonical.txt for consistency)

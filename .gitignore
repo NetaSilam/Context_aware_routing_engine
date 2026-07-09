@@ -17,5 +17,9 @@ dist/
 data/*.parquet
 data/*.geoparquet
 
+# OSRM routing graph - regenerated from a public download in ~2 minutes,
+# see osrm/README.md. ~650MB, never worth committing.
+osrm/data/
+
 .DS_Store
 Thumbs.db

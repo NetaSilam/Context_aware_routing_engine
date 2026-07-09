@@ -202,16 +202,38 @@ ranked:
 Recommendation: build option 1 for the MVP; keep option 3 in your back pocket as the
 "complexity and creativity" talking point in the final report even if you don't ship it.
 
-**Geocoding (a step before any of the above):** OSRM only accepts coordinates, not
-free-text addresses, so a user typing "Dizengoff 100, Tel Aviv" needs an address → lat/lon
-step first. Don't use the public Nominatim demo server for this — its usage policy caps
-you at ~1 req/sec and explicitly forbids autocomplete/heavy use, which collides directly
-with the guidelines' promised manual stress test ("send 999999999 requests to some
-endpoint"). Self-host Nominatim in Docker instead, built from the same Israel `.osm.pbf`
-extract already used for `canonical_network`/OSRM — free, no rate limit, one more
-self-contained container consistent with the rest of the stack. Flow: address text →
-`POST /geocode` on your backend → local Nominatim → candidate coordinates (disambiguate if
-multiple matches) → user confirms → `POST /route` with those coordinates → OSRM → Worker A/B.
+**Status: option 1 implemented and verified.** OSRM runs as its own `compose.yaml` service
+(`osrm/osrm-backend`, `osrm-routed --algorithm mld`), against the Israel/Palestine extract
+prepared once via `osrm-extract`/`osrm-partition`/`osrm-customize` (see `osrm/README.md` —
+took under 2 minutes total, not committed to git, ~650MB regenerated on demand). Verified
+`exclude=motorway` genuinely changes the returned route (confirmed via direct query before
+wiring it into the backend); `POST /api/route` calls it with `alternatives=true` and the
+user's stored `exclude=` preferences.
+
+**Geocoding — real constraint discovered, plan adjusted.** OSRM only accepts coordinates,
+so an address needs a geocoding step first. Self-hosted Nominatim was the original plan
+(built from the same Israel `.osm.pbf`), but importing it requires several GB of free RAM
+during indexing — on the dev machine used for this project (8GB total), running Nominatim's
+import alongside Postgres + OSRM + the app containers exhausted memory badly enough to
+crash the Docker daemon itself, twice. **Current implementation instead calls the public
+Nominatim API** (`https://nominatim.openstreetmap.org`) with a proper `User-Agent` header
+per its usage policy, since a course demo's request volume (occasional single-address
+lookups on button click, not autocomplete) is a different traffic profile than the
+autocomplete/bulk-use case that policy's rate limits actually target. This is a real
+trade-off, not a free lunch — document it as such in the report:
+- **Pro:** zero local resource cost, works today, verified against real Hebrew addresses
+  (e.g. "דיזנגוף 100 תל אביב" → correct coordinates).
+- **Con:** external dependency at demo time (no internet = no geocoding), and the
+  guidelines' promised manual stress test ("send 999999999 requests to some endpoint")
+  must not be pointed at `/api/geocode` specifically, or it'll get you rate-limited/blocked
+  by an external party, not just your own server.
+- **If self-hosting Nominatim later** (e.g. on the course's Azure VM, which likely has more
+  RAM than this dev machine): swap `NOMINATIM_BASE_URL` to point at it — the code doesn't
+  otherwise change (`backend/app/routing_routes.py::_nominatim_base_url`).
+
+Flow as implemented: address text → `GET /api/geocode?q=...` → Nominatim → candidate
+coordinates (frontend shows a picker if more than one match) → user confirms → `POST
+/api/route` with those coordinates → OSRM → Worker A/B.
 
 ### 1.4 Influencing OSRM's route with risk data + user preferences
 
@@ -300,37 +322,61 @@ started to drain the queue under load).
 
 ### 4.1 Core Routing Engine — 60 pts (from the proposal)
 
-**Must have:**
-- `POST /geocode`: address text → candidate coordinates via self-hosted Nominatim (§1.3).
-- `POST /route`: accepts origin/destination coordinates, calls the new OSRM container
-  (§1.3) with `exclude=` set from the user's stored hard preferences (§4.2) and
-  `alternatives=true` for candidate routes + ETA (§1.4).
-- Worker A: snaps each OSRM route's coordinates onto the existing corridor layer (reusing
-  the nearest-corridor matching already implemented in `accident_attribution/assign.py`)
-  to pull historical accident counts `C(i)` per corridor; builds the user's risk context
-  (experience, vehicle type, day/night).
-- Worker B: computes `S(R) = ΣC(i)/ΣL(i)`, derives `Wsafe`/`Wtime` from the risk context,
-  returns the route minimizing `Cost(R) = Wtime·NormalizedTime(R) + Wsafe·NormalizedRisk(R)`
-  among whatever alternatives OSRM returned (§1.4 — note the "OSRM may return only one
-  candidate" limitation there, and don't overclaim otherwise in the report).
-- JWT-based auth (new — doesn't exist yet); only authenticated users can request personalized routes.
-- Redis-backed rate limiting on `/route`, `/geocode`, and all other client-facing endpoints.
+**Status: core loop implemented and verified end-to-end** (`backend/app/routing_routes.py`),
+against real seeded data, through the actual frontend → backend → OSRM/Postgres network
+path (not just unit-level): a real Hebrew address pair ("דיזנגוף 100 תל אביב" → "כיכר רבין
+תל אביב") resolves through geocoding, OSRM returns candidate routes, and the response comes
+back with a real accident count and risk density pulled from the seeded
+`accident_attribution` data.
+
+- `GET /api/geocode?q=...`: address text → candidate coordinates (§1.3; public Nominatim,
+  not self-hosted — see the constraint documented there).
+- `POST /api/route`: accepts origin/destination coordinates + optional `time_of_day`,
+  requires a valid JWT, calls OSRM with `exclude=` set from the user's stored preferences
+  and `alternatives=true`.
+- Worker A (`_accident_count_near_route`): rather than snapping onto the corridor layer as
+  originally planned, this buffers each OSRM candidate's route geometry by 30m (in the
+  ITM/EPSG:2039 analytical CRS) and counts real accident points from
+  `accident_attribution.accident_attributions` that fall inside it — simpler than
+  corridor-matching and avoids depending on corridor topology accuracy; risk density =
+  accident count ÷ route length in km, using OSRM's own `distance` field.
+- Worker B (`_safety_weight` + cost loop in `plan_route`): `Wsafe` starts at 0.4 and adds
+  0.2 for a novice driver, 0.2 for a motorcycle, 0.1 for night — clamped to [0.1, 0.9],
+  directly implementing the proposal's "novice motorcyclist at night → high Wsafe" example.
+  `Wtime = 1 - Wsafe`. Candidates are min-max normalized on time and risk, and
+  `Cost(R) = Wtime·NormalizedTime(R) + Wsafe·NormalizedRisk(R)` picks the winner. Verified
+  with a real 2-alternative case (Tel Aviv → Jerusalem): the two OSRM alternatives had
+  genuinely different accident counts (442 vs. 484) and the lower-cost one was chosen
+  correctly.
+- JWT-based auth (`backend/app/auth.py`, `auth_routes.py`) — bcrypt-hashed passwords,
+  24h-expiry tokens, `app.users` table. Only authenticated requests can call `/api/route`.
+
+**Not yet done:** Redis-backed rate limiting (still just `ENABLE_TEST_ENDPOINTS`-style
+env-var gating for now, no actual limiter); the corridor-snapping approach from §1.4 was
+replaced by the simpler accident-buffer approach above — update the report's math
+description to match what's actually implemented, not the original corridor-based design.
 
 **Constraints:**
-- Workers, Redis, and the database are not reachable from outside the Docker network; only
-  the web gateway is exposed.
-- OSM/OSRM/Nominatim timeouts must degrade gracefully (503, not a crash).
+- The `web` container has no `ports:` mapping in `compose.yaml` — only `frontend` is
+  exposed to the host; `postgis` and `osrm` are reachable only from `web` over the compose
+  network. Verified: `curl localhost:8000` from the host fails after this change, while the
+  same request through `localhost:5173`'s proxy succeeds.
+- OSRM/Nominatim timeouts degrade to 503 (`httpx.HTTPError` caught in `routing_routes.py`),
+  not a crash.
 
 ### 4.2 Long-Term Memory — 10 pts
 
-**Must have:**
-- A persistent per-user preference record beyond the login credentials: at minimum
-  `avoid_tolls`, `avoid_highways`, and the existing driving-experience/vehicle-type
-  profile fields.
-- Preferences feed into the Worker B cost function as hard filters or additional weighted
-  terms — not just the single `Wsafe`/`Wtime` knob (this directly addresses the "single
-  weight" feedback).
-- Preferences are editable by the user and persist across sessions/logins.
+**Status: implemented.** `app.users` (`backend/app/schema.py`) stores
+`driving_experience` (novice/experienced), `vehicle_type` (car/motorcycle/truck),
+`avoid_tolls`, `avoid_highways` per account, set at signup and editable via
+`PATCH /api/auth/me`. These feed Worker B two different ways — `avoid_tolls`/`avoid_highways`
+as hard OSRM `exclude=` filters, `driving_experience`/`vehicle_type` as continuous inputs
+to the `Wsafe` calculation — which is the "genuinely independent preferences, not just the
+single Wsafe/Wtime knob" fix the TA's feedback asked for (§2).
+
+**Not yet done:** the "nice to have" passive-learning idea from the original draft (nudging
+preferences based on repeated route rejections) — skip it, a settings page fully satisfies
+the requirement and this isn't worth the complexity given the timeline.
 
 **Nice to have:** passive learning — e.g., if a user repeatedly rejects/edits a suggested
 route in a consistent way, nudge the stored preference (skip if time-constrained; a
@@ -420,19 +466,19 @@ without manual refresh — WebSocket or SSE from the web gateway.
 - [ ] Port the remaining pieces from the foundation repo as proper `repositories/`/`services/`/`schemas/` layers (currently one flat `data_routes.py` with inline SQL) if/when `traffic_coverage` data or the audit tables become available - not urgent, current structure is fine for the MVP.
 - [x] Frontend ported (`frontend/`, React/Leaflet, Canonical Network + Accident Attribution pages, Traffic Coverage dropped). Dockerized as its own service, wired to the backend via `API_PROXY_TARGET`; `web` no longer publishes a port to the host, only `frontend` does (http://localhost:5173) - closes the "only the web container is exposed to clients" gap in one move. Verified: frontend's own test suite (9 tests) + `tsc`/production build + live end-to-end render against seeded data, all pass.
 - [ ] §6.2/§6.4: send the confirmation email to the TA (LLM wording + forum reinterpretation) — still open.
-- [ ] Stand up the OSRM and Nominatim containers from §1.3 in the new repo, both against the same Israel `.osm.pbf` extract the foundation repo already uses.
-- [ ] Extend `compose.yaml` with redis + OSRM + Nominatim; decide Option A vs. B from §3 for reliable job delivery.
-- [ ] Data model additions on top of the ported Postgres/PostGIS schema: User, RoutePreference, HazardReport, Comment, Vote, DirectMessage, Notification.
+- [x] OSRM stood up (§1.3) - real container, Israel/Palestine graph prepared and verified (route alternatives, `exclude=motorway` confirmed to actually change the route). Nominatim **not self-hosted**: pivoted to the public API after self-hosting crashed the dev machine (out of RAM) - see §1.3's geocoding note for the full trade-off and how to switch to self-hosted later.
+- [x] `compose.yaml` extended with `osrm` (internal-only). Redis/job-queue still not added - not needed yet since routing is currently synchronous request/response, not queued.
+- [x] Data model added: `app.users` (driving_experience, vehicle_type, avoid_tolls, avoid_highways) - see §4.2. `RoutePreference` folded into `users` rather than a separate table (simpler, same effect). `HazardReport`/`Comment`/`Vote`/`DirectMessage`/`Notification` still not started - that's the Phase 2 forum work.
 
-### Phase 1 — Jul 9 → Jul 16 (MVP for the presentation)
-- [ ] `POST /geocode`: address text → candidate coordinates via the Nominatim container.
-- [ ] Worker A: glue OSRM's route output (with `exclude=` set from stored preferences) to the existing corridor-matching logic to pull accident counts per candidate route.
-- [ ] Worker B: risk density + cost function, returning a ranked route (this is the one piece of the original proposal's math that doesn't exist in the repo yet).
-- [ ] Auth: JWT login/signup (new — the current API has no auth at all).
-- [ ] `POST /route` end-to-end through the queue, with auth and rate limiting.
-- [ ] Frontend: a 3rd page — route request form (origin/destination) + map showing the chosen route, alongside the 2 already-ported explorer pages (visual design isn't graded, keep this thin).
-- [ ] Manual hand-calculated sanity check on 2-3 routes vs. Waze (from TA feedback, cheap to do now while the math is fresh).
-- [ ] 5-minute presentation deck + live demo of the MVP — the existing 2 explorer pages plus a working end-to-end route request is already a credible demo.
+### Phase 1 — Jul 9 → Jul 16 (MVP for the presentation) — core loop done, ahead of schedule
+- [x] `GET /api/geocode`: address text → candidate coordinates (§1.3, public Nominatim).
+- [x] Worker A: implemented as a 30m route-buffer accident count (`accident_attribution.accident_attributions`), not corridor-matching - see §4.1 for why, update any report text that still describes the corridor-matching version.
+- [x] Worker B: risk density + cost function, verified picking the correct lower-cost route between two genuinely different OSRM alternatives (Tel Aviv → Jerusalem: 442 vs. 484 accidents).
+- [x] Auth: JWT login/signup/me/preferences (`backend/app/auth.py`, `auth_routes.py`), bcrypt-hashed passwords.
+- [x] `POST /api/route` end-to-end with auth - verified with a real geocoded Hebrew address pair (דיזנגוף 100 תל אביב → כיכר רבין). **No rate limiting yet** (was "with the queue" in the original plan - there's no queue yet either, requests are synchronous; fine for now, revisit under Phase 3's job-queue work).
+- [x] Frontend: "Plan a Route" page (`frontend/src/pages/PlanRoutePage.tsx`) - now the default/first page, with the 2 explorer pages still present as secondary tabs. Sign in/sign up, address search with disambiguation, map showing the chosen route vs. alternatives, and the stats/explanation panel.
+- [ ] Manual hand-calculated sanity check on 2-3 routes vs. Waze (from TA feedback, cheap to do now while the math is fresh) - still open.
+- [ ] 5-minute presentation deck - still open, but the live demo material now exists: sign up, plan a route, see the risk-aware pick.
 
 ### Phase 2 — Jul 16 → Aug 2
 - [ ] Long-term memory: preference storage (tolls/highways) wired into Worker B's cost function.

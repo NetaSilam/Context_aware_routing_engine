@@ -19,6 +19,18 @@ services:
       - postgis_data:/var/lib/postgresql/data
     # Not exposed to the host on purpose: only the web container talks to the DB directly.
 
+  osrm:
+    image: osrm/osrm-backend
+    container_name: routing-engine-osrm
+    restart: unless-stopped
+    command: >
+      osrm-routed --algorithm mld
+      /data/${OSRM_GRAPH_NAME:-israel-and-palestine-latest}.osrm
+    volumes:
+      # Prepared graph, not committed - see osrm/README.md to (re)generate it.
+      - ./osrm/data:/data:ro
+    # Not exposed to the host: only the web container calls this directly.
+
   web:
     build: ./backend
     container_name: routing-engine-web
@@ -29,6 +41,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-routing_engine}:${POSTGRES_PASSWORD:-routing_engine_dev_password}@postgis:5432/${POSTGRES_DB:-routing_engine}
       ENABLE_TEST_ENDPOINTS: ${ENABLE_TEST_ENDPOINTS:-false}
+      OSRM_BASE_URL: http://osrm:5000
+      JWT_SECRET: ${JWT_SECRET:-dev_only_change_me}
     # No `ports:` on purpose - only the frontend container talks to this API
     # directly (see compose network); clients only ever reach the frontend.
     volumes:
