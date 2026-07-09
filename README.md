@@ -26,12 +26,23 @@ cp .env.example .env
 docker compose up --build
 ```
 
-- API: http://localhost:8000 (`/health`, `/health/db`)
+- **App: http://localhost:5173** - a React/Leaflet map viewer with two pages
+  (Canonical Network, Accident Attribution), ported from the foundation
+  project. This is the only container exposed to the host; the API is
+  reachable only from the frontend container over the compose network.
+- The backend API (`/health`, `/health/db`, `/api/canonical-network/*`,
+  `/api/accident-attribution/*`) is not published to the host on purpose -
+  only `frontend` talks to it directly, matching the course's "only the web
+  container is exposed to clients" requirement. To hit it directly for
+  debugging, temporarily add a `ports:` mapping to the `web` service.
 - On first startup, the `web` container loads `data/*.parquet`/`*.geoparquet`
   into PostGIS (schemas `foundation_data`, `canonical_network`,
   `accident_attribution`) if those tables are empty. Subsequent restarts skip
   seeding since the tables are already populated. Verified locally: all 8
-  tables load with real row counts (49,941 accidents, 362,922 corridors, etc.).
+  tables load with real row counts (49,941 accidents, 362,922 corridors, etc.),
+  and the frontend renders real data through the proxy end-to-end.
+- Dropped from the port: the foundation project's Traffic Coverage page/API -
+  no traffic-count data is in this export (see `data/README.md`).
 
 ## Running the tests
 
@@ -39,4 +50,9 @@ docker compose up --build
 cd backend
 pip install -r requirements.txt
 pytest
+
+cd ../frontend
+npm install
+npm test        # vitest - 4 suites, 9 tests, all passing as of this port
+npm run build   # tsc typecheck + production build
 ```

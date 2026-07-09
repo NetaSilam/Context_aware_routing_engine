@@ -98,17 +98,25 @@ geometry instead of a simplified display version, and corridor detail won't show
 fields. The `canonical_network` `/summary` endpoint depends entirely on audit tables that
 also aren't in this export and won't work either way unless those are added.
 
-Remaining carryover work:
+**Status: done for corridors + accidents.** `backend/app/data_routes.py` serves
+`canonical_network.canonical_corridors`(+detail), `accident_attribution.accident_attributions`
+(list+detail+filters), and the accident summary — hand-adapted (not a straight copy) to
+close the gap above, since the original repo's `repositories/`/`schemas/` layer expects
+fields (`canonical_corridor_display`, `canonical_roads`, audit tables) that aren't in this
+data export. Not ported: `canonical_network`'s `/summary` (needs the missing audit tables)
+and all of `traffic_coverage` (no data for it in this export).
 
-1. **Serving/query code → port it, it's real application code.** `backend/app/api/routes/{canonical_network,accident_attribution,traffic_coverage}.py`
-   and their matching `repositories/`/`services/`/`schemas/` modules are not batch ETL —
-   they're the tested, working read API this project needs to show corridor/accident data
-   on the map and to feed Worker A's risk lookup (§4.1). Copy these modules into the new
-   repo's backend, apply the adaptation from the gap above, and keep their existing tests
-   where they still apply.
-2. **Frontend explorer pages → optional carryover.** The 3 existing map-explorer pages are
-   a nice-to-have (e.g. as an admin/debug view) but not required for the core user flow
-   (request a route). Port them only if time allows after the route-request UI works.
+**Frontend: also done.** The React/Leaflet frontend (`frontend/`) was ported from the
+foundation repo - two pages (Canonical Network, Accident Attribution), dropping the
+Traffic Coverage page entirely (no data). Its typed API client (`src/api/*.ts`) has
+strict runtime parsers that expect an exact response shape, so `data_routes.py` was
+written to match those shapes field-for-field rather than inventing a simpler one -
+verified by running the frontend's actual test suite (4 suites, 9 tests, all passing),
+`tsc` typecheck + production build, and an end-to-end check through the real Docker
+network (frontend's Vite dev-server proxy → backend → seeded PostGIS, real Tel-Aviv-area
+data rendered, Hebrew corridor names intact). The backend container has no `ports:`
+mapping anymore - only `frontend` (http://localhost:5173) is exposed to the host, matching
+the "only the web container is exposed to clients" constraint from the guidelines.
 
 ---
 
@@ -410,6 +418,7 @@ without manual refresh — WebSocket or SSE from the web gateway.
 - [x] §0.1 step 1: `data/` parquet/geoparquet exports added; `backend/app/seed.py` loads them into PostGIS on first `web` startup. **Verified end-to-end** with `docker compose up --build`: `/health` and `/health/db` both return 200, all 8 tables seeded with real row counts (49,941 accidents, 362,922 corridors, 317,440 OSM roads, etc.), and re-running skips already-seeded tables (checked via a second `docker compose up`). One bug found and fixed in the process: `accident_attribution_summary`'s breakdown columns hold nested dict values that neither pandas nor psycopg can bind directly — `seed.py` now JSON-encodes those to text before insert.
 - [x] Closed the `canonical_corridor_display`/`canonical_roads` gap from §0.1 by adapting rather than waiting for the missing tables: `backend/app/data_routes.py` now serves `/api/canonical-network/corridors` (bbox list), `/corridors/{id}` (detail + official segment links), `/api/accident-attribution/accidents` (bbox list), and `/accidents-attribution/summary` — all querying real seeded data, verified live (real Tel-Aviv-area corridors/accidents returned, Hebrew street names intact). Not ported: `canonical_network`'s `/summary` (needs the missing audit tables) and all of `traffic_coverage` (no data for it in this export).
 - [ ] Port the remaining pieces from the foundation repo as proper `repositories/`/`services/`/`schemas/` layers (currently one flat `data_routes.py` with inline SQL) if/when `traffic_coverage` data or the audit tables become available - not urgent, current structure is fine for the MVP.
+- [x] Frontend ported (`frontend/`, React/Leaflet, Canonical Network + Accident Attribution pages, Traffic Coverage dropped). Dockerized as its own service, wired to the backend via `API_PROXY_TARGET`; `web` no longer publishes a port to the host, only `frontend` does (http://localhost:5173) - closes the "only the web container is exposed to clients" gap in one move. Verified: frontend's own test suite (9 tests) + `tsc`/production build + live end-to-end render against seeded data, all pass.
 - [ ] §6.2/§6.4: send the confirmation email to the TA (LLM wording + forum reinterpretation) — still open.
 - [ ] Stand up the OSRM and Nominatim containers from §1.3 in the new repo, both against the same Israel `.osm.pbf` extract the foundation repo already uses.
 - [ ] Extend `compose.yaml` with redis + OSRM + Nominatim; decide Option A vs. B from §3 for reliable job delivery.
@@ -421,9 +430,9 @@ without manual refresh — WebSocket or SSE from the web gateway.
 - [ ] Worker B: risk density + cost function, returning a ranked route (this is the one piece of the original proposal's math that doesn't exist in the repo yet).
 - [ ] Auth: JWT login/signup (new — the current API has no auth at all).
 - [ ] `POST /route` end-to-end through the queue, with auth and rate limiting.
-- [ ] Frontend: a 4th page — route request form (origin/destination) + map showing the chosen route, alongside the 3 existing explorer pages (visual design isn't graded, keep this thin).
+- [ ] Frontend: a 3rd page — route request form (origin/destination) + map showing the chosen route, alongside the 2 already-ported explorer pages (visual design isn't graded, keep this thin).
 - [ ] Manual hand-calculated sanity check on 2-3 routes vs. Waze (from TA feedback, cheap to do now while the math is fresh).
-- [ ] 5-minute presentation deck + live demo of the MVP — the existing 3 explorer pages plus a working end-to-end route request is already a credible demo.
+- [ ] 5-minute presentation deck + live demo of the MVP — the existing 2 explorer pages plus a working end-to-end route request is already a credible demo.
 
 ### Phase 2 — Jul 16 → Aug 2
 - [ ] Long-term memory: preference storage (tolls/highways) wired into Worker B's cost function.

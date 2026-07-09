@@ -29,12 +29,23 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-routing_engine}:${POSTGRES_PASSWORD:-routing_engine_dev_password}@postgis:5432/${POSTGRES_DB:-routing_engine}
       ENABLE_TEST_ENDPOINTS: ${ENABLE_TEST_ENDPOINTS:-false}
-    ports:
-      - "${WEB_PORT:-8000}:8000"
+    # No `ports:` on purpose - only the frontend container talks to this API
+    # directly (see compose network); clients only ever reach the frontend.
     volumes:
       # Read-only: the foundation pipeline's parquet/geoparquet exports, loaded into
       # PostGIS on first startup by app/seed.py (see data/README.md for what's in here).
       - ./data:/data:ro
+
+  frontend:
+    build: ./frontend
+    container_name: routing-engine-frontend
+    restart: unless-stopped
+    depends_on:
+      - web
+    environment:
+      API_PROXY_TARGET: http://web:8000
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
 
 volumes:
   postgis_data:
