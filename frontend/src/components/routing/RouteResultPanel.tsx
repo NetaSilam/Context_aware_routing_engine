@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { MapContainer, Polyline, TileLayer } from "react-leaflet";
 
 import type { RouteResponse } from "../../types/routing";
@@ -13,17 +14,25 @@ function toLatLngs(coordinates: [number, number][]): [number, number][] {
 }
 
 export default function RouteResultPanel(props: RouteResultPanelProps): JSX.Element | null {
+  const { result } = props;
+  const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null);
+
+  // A new route request produces a new `result` object - clear any highlight from
+  // a previous result rather than carrying a stale/out-of-range index forward.
+  useEffect(() => {
+    setHighlightedIndex(null);
+  }, [result]);
+
   if (props.loading) {
     return <p className="loading-banner">Fetching candidate routes and scoring historical risk…</p>;
   }
   if (props.error) {
     return <p className="error-banner">{props.error}</p>;
   }
-  if (!props.result) {
+  if (!result) {
     return null;
   }
 
-  const { result } = props;
   const chosenLatLngs = toLatLngs(result.chosen_route.geometry.coordinates);
   const bounds = chosenLatLngs;
 
@@ -42,13 +51,23 @@ export default function RouteResultPanel(props: RouteResultPanelProps): JSX.Elem
             {result.alternatives
               .map((alt, index) => ({ alt, index }))
               .filter(({ index }) => index !== result.chosen_index)
-              .map(({ alt, index }) => (
-                <Polyline
-                  key={`alt-${index}`}
-                  positions={toLatLngs(alt.geometry.coordinates)}
-                  pathOptions={{ color: "#a3333d", weight: 3, opacity: 0.45, dashArray: "6 8" }}
-                />
-              ))}
+              .map(({ alt, index }) => {
+                const isHighlighted = index === highlightedIndex;
+                return (
+                  <Polyline
+                    key={`alt-${index}`}
+                    positions={toLatLngs(alt.geometry.coordinates)}
+                    eventHandlers={{
+                      click: () => setHighlightedIndex(isHighlighted ? null : index),
+                    }}
+                    pathOptions={
+                      isHighlighted
+                        ? { color: "#f28444", weight: 5, opacity: 0.95 }
+                        : { color: "#a3333d", weight: 3, opacity: 0.45, dashArray: "6 8" }
+                    }
+                  />
+                );
+              })}
             <Polyline
               positions={chosenLatLngs}
               pathOptions={{ color: "#0d7288", weight: 5, opacity: 0.9 }}
@@ -96,14 +115,24 @@ export default function RouteResultPanel(props: RouteResultPanelProps): JSX.Elem
           <div className="visible-corridor-list">
             <div className="visible-corridor-list__header">
               <h3>Compare candidates</h3>
-              <p>Solid teal on the map is the chosen route; dashed red are the others.</p>
+              <p>Click a row to highlight it on the map (orange). Teal is always the chosen route.</p>
             </div>
             <ul>
               {result.alternatives.map((alt, index) => {
                 const isChosen = index === result.chosen_index;
+                const isHighlighted = index === highlightedIndex;
                 return (
                   <li key={index}>
-                    <div className={isChosen ? "corridor-row corridor-row--selected" : "corridor-row"}>
+                    <button
+                      type="button"
+                      className={
+                        isChosen || isHighlighted
+                          ? "corridor-row corridor-row--selected"
+                          : "corridor-row"
+                      }
+                      disabled={isChosen}
+                      onClick={() => setHighlightedIndex(isHighlighted ? null : index)}
+                    >
                       <span>
                         {isChosen ? "✓ Chosen — " : ""}
                         {(alt.distance_m / 1000).toFixed(1)} km, {Math.round(alt.duration_s / 60)} min
@@ -112,7 +141,7 @@ export default function RouteResultPanel(props: RouteResultPanelProps): JSX.Elem
                         {alt.accident_count} accidents ({alt.risk_density.toFixed(1)}/km) · cost{" "}
                         {alt.cost.toFixed(2)}
                       </span>
-                    </div>
+                    </button>
                   </li>
                 );
               })}
