@@ -40,8 +40,9 @@ export default function RouteResultPanel(props: RouteResultPanelProps): JSX.Elem
           <MapContainer className="corridor-map" bounds={bounds}>
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             {result.alternatives
-              .filter((alt) => alt !== result.chosen_route)
-              .map((alt, index) => (
+              .map((alt, index) => ({ alt, index }))
+              .filter(({ index }) => index !== result.chosen_index)
+              .map(({ alt, index }) => (
                 <Polyline
                   key={`alt-${index}`}
                   positions={toLatLngs(alt.geometry.coordinates)}
@@ -90,6 +91,34 @@ export default function RouteResultPanel(props: RouteResultPanelProps): JSX.Elem
             <dd>{result.alternatives.length}</dd>
           </div>
         </dl>
+
+        {result.alternatives.length > 1 ? (
+          <div className="visible-corridor-list">
+            <div className="visible-corridor-list__header">
+              <h3>Compare candidates</h3>
+              <p>Solid teal on the map is the chosen route; dashed red are the others.</p>
+            </div>
+            <ul>
+              {result.alternatives.map((alt, index) => {
+                const isChosen = index === result.chosen_index;
+                return (
+                  <li key={index}>
+                    <div className={isChosen ? "corridor-row corridor-row--selected" : "corridor-row"}>
+                      <span>
+                        {isChosen ? "✓ Chosen — " : ""}
+                        {(alt.distance_m / 1000).toFixed(1)} km, {Math.round(alt.duration_s / 60)} min
+                      </span>
+                      <span className="accident-row__meta">
+                        {alt.accident_count} accidents ({alt.risk_density.toFixed(1)}/km) · cost{" "}
+                        {alt.cost.toFixed(2)}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ) : null}
       </aside>
     </section>
   );

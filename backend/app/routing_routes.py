@@ -179,11 +179,13 @@ def plan_route(payload: RouteRequest, user: dict[str, Any] = Depends(get_current
         candidate["cost"] = w_time * n_time + w_safe * n_risk
 
     best = min(candidates, key=lambda c: c["cost"])
+    chosen_index = candidates.index(best)
 
     return {
         "time_of_day": time_of_day,
         "weights": {"w_safe": w_safe, "w_time": w_time},
         "chosen_route": best,
+        "chosen_index": chosen_index,
         "alternatives": candidates,
         "explanation": (
             f"Chose the route minimizing cost given a safety weight of {w_safe:.2f} "

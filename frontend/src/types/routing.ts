@@ -27,6 +27,7 @@ export interface RouteResponse {
   time_of_day: "day" | "night";
   weights: { w_safe: number; w_time: number };
   chosen_route: RouteCandidate;
+  chosen_index: number;
   alternatives: RouteCandidate[];
   explanation: string;
 }
