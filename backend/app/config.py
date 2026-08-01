@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from typing import Literal
+
 from pydantic import Field, RedisDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -27,6 +29,15 @@ class Settings(BaseSettings):
     auth_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     signup_rate_limit: int = Field(default=5, ge=1, le=100)
     login_rate_limit: int = Field(default=10, ge=1, le=100)
+    corridor_matcher_method: Literal["sampled-nearest"] = "sampled-nearest"
+    corridor_matcher_version: str = Field(
+        default="sampled-nearest-v1", min_length=1, max_length=100
+    )
+    corridor_matcher_sample_interval_m: float = Field(default=100.0, ge=50.0, le=100.0)
+    corridor_matcher_tolerance_m: float = Field(default=30.0, gt=0.0, le=100.0)
+    corridor_matcher_low_coverage_threshold: float = Field(
+        default=0.80, ge=0.0, le=1.0
+    )
 
     @field_validator("database_url")
     @classmethod

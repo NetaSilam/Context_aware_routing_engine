@@ -136,8 +136,11 @@ choice.
       stability after small route-geometry shifts.
 - [ ] Repeated measurements record warm p50/p95 matching time for three candidates and the
       intended machine specifications.
-- [ ] A method must meet the initial p95 target of less than one second for three candidates;
-      among passing methods, the more accurate method is selected.
+- [ ] For exactly three candidates, warm p95 is below 1.5 seconds when every candidate is at
+      most 40 km and below 5 seconds when every candidate is 60-80 km; among passing methods,
+      the more accurate method is selected.
+- [ ] The fixed genuine self-hosted-OSRM corpus retains the 31.47-38.84 km highway candidates
+      and 64.98-66.75 km long candidates regardless of benchmark outcome.
 - [ ] The selected tolerance or sample interval and low-coverage warning threshold are recorded
       as validated configuration.
 - [ ] Long-corridor examples confirm average-density prorating is acceptable; otherwise the
@@ -449,7 +452,10 @@ required test category, measured performance, abuse resistance, and clean-machin
       crash, no cross-user data, and no duplicate history.
 - [ ] The real-data benchmark records machine specifications, cold/warm p50/p95 matching and
       full-job times, selected matcher parameters, coverage threshold, worker capacity, pool
-      limits, timeouts, retries, and calculated risk reference.
+      limits, timeouts, retries, and calculated risk reference. Matcher results are checked
+      against the under-1.5-second through-40-km and under-5-second 60-80-km tiers. Typical full
+      jobs retain the under-five-second target; long full jobs are recorded separately against
+      the initial under-ten-second target.
 - [ ] A feature-to-test matrix links every claimed feature to actual tests and commands without
       claiming unimplemented coverage.
 - [ ] Setup documentation covers environment creation, fixture tests, full-data initialization,

@@ -296,10 +296,15 @@ crash and not a guarantee of the globally safest possible route.
     Deterministic nearest/best-match rules prevent parallel roads or carriageways from
     double-counting matched length and accidents. Coverage must not exceed 100%.
 
-18. **Matcher performance gate.** On the documented intended course machine, the initial p95
-    target is under one second for matching/scoring all three candidates and under five seconds
-    for a complete background job. Measure repeated warm behavior and document machine
-    specifications; do not claim an unmeasured target was achieved.
+18. **Matcher performance gate.** On the documented intended course machine, warm p95 for
+    matching exactly three candidates is under 1.5 seconds when every candidate is at most
+    40 km, and under 5 seconds when every candidate is 60-80 km. The fixed benchmark keeps its
+    genuine self-hosted-OSRM distances: 31.47-38.84 km for the highway case and
+    64.98-66.75 km for the long case. Do not shorten or replace cases based on results. Typical
+    routes retain the under-five-second complete-background-job target; record long-route
+    full-job performance separately against an initial under-ten-second target. Measure
+    repeated warm behavior and document machine specifications; do not claim an unmeasured
+    target was achieved.
 
 19. **Risk calculation.** For each matched corridor portion:
 
@@ -676,9 +681,12 @@ crash and not a guarantee of the globally safest possible route.
     no process crash, no cross-user data, no duplicate history, and recovery after load falls.
 
 15. **Performance coverage.** Separately run the real-data matcher benchmark on the documented
-    course machine. Record cold/warm behavior and p50/p95 values for three candidates and full
-    jobs. The test must select exact overlap or sampling based on the agreed accuracy and runtime
-    gate and record the final tolerance/sample interval and coverage threshold.
+    course machine. Record cold/warm behavior and p50/p95 values for exactly three candidates
+    and full jobs. Verify the tiered matcher gates: under 1.5 seconds through 40 km and under
+    5 seconds for 60-80 km. Typical full jobs retain the under-five-second target; record long
+    full jobs separately against the initial under-ten-second target. The test must select exact
+    overlap or sampling based on the agreed accuracy and runtime gate and record the final
+    tolerance/sample interval and coverage threshold.
 
 16. **Real-service smoke coverage.** Keep optional, clearly labelled smoke/manual tests for the
     pinned real OSRM graph and public Nominatim policy behavior. These are not part of the

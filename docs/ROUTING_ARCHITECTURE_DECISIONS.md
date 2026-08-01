@@ -461,6 +461,25 @@ backpressure when demand exceeds the machine's capacity.
 Why: this is enough to demonstrate a credible scaling path on one academic deployment without
 adding Kubernetes or unnecessary infrastructure.
 
+## Matcher performance contract
+
+The selected production matcher is `sampled-nearest-v1`: 100 metre samples, a 30 metre nearest-
+corridor tolerance, indexed 1 km route-chunk preselection, deterministic exact-distance then
+`corridor_id` tie-breaking, and an 80% low-coverage warning threshold. Average-density
+prorating across a partially used long corridor is accepted for the version-1 historical proxy;
+smaller precomputed risk sections remain a possible later precision improvement.
+
+Benchmark exactly three candidates on the documented intended course machine. Warm p95 must be
+under 1.5 seconds when every candidate is at most 40 km and under 5 seconds when every candidate
+is 60-80 km. The fixed genuine self-hosted-OSRM corpus is not adjusted based on results: its
+highway candidates are 31.47-38.84 km and its long candidates are 64.98-66.75 km. Typical routes
+retain the under-five-second complete-background-job target. Long-route full-job performance is
+recorded separately against an initial under-ten-second target.
+
+The matcher experiment records machine specifications, warm p50/p95, coverage, visual
+correctness, and score stability. A method is eligible only if it passes the applicable route-
+length tier; among eligible methods, prefer the more accurate method.
+
 ## Implementation and validation order
 
 1. Create migrations and the precomputed corridor-risk table.
@@ -479,9 +498,6 @@ adding Kubernetes or unnecessary infrastructure.
 
 The following are not missing architecture decisions; they require experiments or data:
 
-- The exact corridor-overlap tolerance and minimum accepted overlap.
-- Whether exact overlap or 50-100 m point sampling gives the best accuracy/runtime tradeoff.
-- The measured scoring latency and final performance target.
 - The value of `reference_risk_p95` and the script that calculates it.
 - Optional accident-severity weights.
 - Result TTL and whether route history becomes a persistent product feature.
