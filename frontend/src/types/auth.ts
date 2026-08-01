@@ -23,3 +23,8 @@ export interface LoginInput {
   email: string;
   password: string;
 }
+
+export type PreferenceUpdate = Pick<
+  UserProfile,
+  "driving_experience" | "vehicle_type" | "avoid_tolls" | "avoid_highways"
+>;

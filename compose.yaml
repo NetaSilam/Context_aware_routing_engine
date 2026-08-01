@@ -40,6 +40,8 @@ services:
       FOUNDATION_DATA_MODE: ${FOUNDATION_DATA_MODE:-fixture}
       FOUNDATION_DATA_CHECKSUM: ${FOUNDATION_DATA_CHECKSUM:-}
       FOUNDATION_FIXTURE_PATH: /app/tests/fixtures/foundation_fixture.sql
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,6 +54,8 @@ services:
       REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
       FOUNDATION_DATA_VERSION: ${FOUNDATION_DATA_VERSION:?Set FOUNDATION_DATA_VERSION in .env}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
     depends_on:
       initialize:
         condition: service_completed_successfully

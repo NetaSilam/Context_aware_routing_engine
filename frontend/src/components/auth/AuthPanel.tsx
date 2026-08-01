@@ -1,10 +1,10 @@
 import { useState } from "react";
 
-import { login, setToken, signup } from "../../api/auth";
-import type { DrivingExperience, VehicleType } from "../../types/auth";
+import { login, signup } from "../../api/auth";
+import type { DrivingExperience, UserProfile, VehicleType } from "../../types/auth";
 
 interface AuthPanelProps {
-  onAuthenticated: (token: string) => void;
+  onAuthenticated: (user: UserProfile) => void;
 }
 
 export default function AuthPanel(props: AuthPanelProps): JSX.Element {
@@ -23,7 +23,7 @@ export default function AuthPanel(props: AuthPanelProps): JSX.Element {
     setError(null);
     setSubmitting(true);
     try {
-      const token =
+      const user =
         mode === "login"
           ? await login({ email, password })
           : await signup({
@@ -34,8 +34,7 @@ export default function AuthPanel(props: AuthPanelProps): JSX.Element {
               avoid_tolls: avoidTolls,
               avoid_highways: avoidHighways,
             });
-      setToken(token);
-      props.onAuthenticated(token);
+      props.onAuthenticated(user);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed.");
     } finally {
@@ -73,6 +72,7 @@ export default function AuthPanel(props: AuthPanelProps): JSX.Element {
               type="password"
               required
               minLength={8}
+              maxLength={72}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />

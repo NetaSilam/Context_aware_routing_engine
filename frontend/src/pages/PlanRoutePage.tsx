@@ -1,36 +1,42 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
-import { clearToken, getMe, getToken } from "../api/auth";
-import AuthPanel from "../components/auth/AuthPanel";
+import { updatePreferences } from "../api/auth";
 import RouteJobShell from "../components/route-jobs/RouteJobShell";
-import type { UserProfile } from "../types/auth";
+import type { DrivingExperience, UserProfile, VehicleType } from "../types/auth";
 
-export default function PlanRoutePage(): JSX.Element {
-  const [token, setTokenState] = useState<string | null>(() => getToken());
-  const [user, setUser] = useState<UserProfile | null>(null);
+interface PlanRoutePageProps {
+  user: UserProfile;
+  onProfileUpdated: (user: UserProfile) => void;
+}
 
-  useEffect(() => {
-    if (!token) {
-      setUser(null);
-      return;
-    }
-    let cancelled = false;
-    void getMe(token)
-      .then((profile) => {
-        if (!cancelled) {
-          setUser(profile);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          clearToken();
-          setTokenState(null);
-        }
+export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [drivingExperience, setDrivingExperience] = useState(props.user.driving_experience);
+  const [vehicleType, setVehicleType] = useState(props.user.vehicle_type);
+  const [avoidTolls, setAvoidTolls] = useState(props.user.avoid_tolls);
+  const [avoidHighways, setAvoidHighways] = useState(props.user.avoid_highways);
+
+  async function savePreferences(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updatePreferences({
+        driving_experience: drivingExperience,
+        vehicle_type: vehicleType,
+        avoid_tolls: avoidTolls,
+        avoid_highways: avoidHighways,
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
+      props.onProfileUpdated(updated);
+      setEditing(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update preferences.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <main className="page-shell">
@@ -43,36 +49,41 @@ export default function PlanRoutePage(): JSX.Element {
         </p>
       </section>
 
-      {!token ? (
-        <AuthPanel onAuthenticated={(newToken) => setTokenState(newToken)} />
-      ) : (
-        <>
-          {user ? (
-            <section className="filters-panel" aria-label="Current profile">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <p>
-                  Signed in as <strong>{user.email}</strong> — {user.driving_experience},{" "}
-                  {user.vehicle_type}
-                  {user.avoid_highways ? ", avoids highways" : ""}
-                  {user.avoid_tolls ? ", avoids tolls" : ""}.
-                </p>
-                <button
-                  type="button"
-                  className="ghost-button"
-                  onClick={() => {
-                    clearToken();
-                    setTokenState(null);
-                    setUser(null);
-                  }}
-                >
-                  Sign out
-                </button>
-              </div>
-            </section>
-          ) : null}
-          <RouteJobShell status="empty" />
-        </>
-      )}
+      <section className="filters-panel" aria-label="Current profile">
+        <p>
+          Signed in as <strong>{props.user.email}</strong> — {props.user.driving_experience},{" "}
+          {props.user.vehicle_type}
+          {props.user.avoid_highways ? ", avoids highways" : ""}
+          {props.user.avoid_tolls ? ", avoids tolls" : ""}.
+        </p>
+        <button type="button" className="ghost-button" onClick={() => setEditing(!editing)}>
+          Edit route preferences
+        </button>
+        {editing ? (
+          <form onSubmit={savePreferences} aria-label="Route preferences">
+            {error ? <p className="error-banner">{error}</p> : null}
+            <label>
+              Driving experience
+              <select value={drivingExperience} onChange={(event) => setDrivingExperience(event.target.value as DrivingExperience)}>
+                <option value="experienced">Experienced</option>
+                <option value="novice">Novice</option>
+              </select>
+            </label>
+            <label>
+              Vehicle type
+              <select value={vehicleType} onChange={(event) => setVehicleType(event.target.value as VehicleType)}>
+                <option value="car">Car</option>
+                <option value="motorcycle">Motorcycle</option>
+                <option value="truck">Truck</option>
+              </select>
+            </label>
+            <label><input type="checkbox" checked={avoidHighways} onChange={(event) => setAvoidHighways(event.target.checked)} /> Avoid highways</label>
+            <label><input type="checkbox" checked={avoidTolls} onChange={(event) => setAvoidTolls(event.target.checked)} /> Avoid tolls</label>
+            <button type="submit" className="primary-button" disabled={saving}>Save preferences</button>
+          </form>
+        ) : null}
+      </section>
+      <RouteJobShell status="empty" />
     </main>
   );
 }

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
+from app.auth import get_current_user
 from app.auth_routes import router as auth_router
 from app.config import get_settings
 from app.data_routes import router as data_router
@@ -21,7 +22,7 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(health_router)
-    app.include_router(data_router)
+    app.include_router(data_router, dependencies=[Depends(get_current_user)])
     app.include_router(auth_router)
 
     return app

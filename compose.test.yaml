@@ -11,13 +11,19 @@ services:
       REDIS_URL: redis://redis:6379/0
       FOUNDATION_DATA_VERSION: test-fixture-v1
       FOUNDATION_DATA_MODE: fixture
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
 
   api:
     environment:
       DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
       REDIS_URL: redis://redis:6379/0
       FOUNDATION_DATA_VERSION: test-fixture-v1
-      JWT_SECRET: test-only-not-for-deployment
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      AUTH_COOKIE_SECURE: "false"
+      LOGIN_RATE_LIMIT: "2"
+      SIGNUP_RATE_LIMIT: "2"
 
   frontend:
     profiles: ["development-ui"]
@@ -35,4 +41,67 @@ services:
       RUN_FOUNDATION_INTEGRATION: "true"
     depends_on:
       api:
+        condition: service_healthy
+
+  secure-auth-api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      AUTH_COOKIE_SECURE: "true"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  auth-unavailable-api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://unavailable-redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      AUTH_COOKIE_SECURE: "false"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  auth-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_auth_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      AUTH_TEST_API_URL: http://api:8000
+      AUTH_TEST_SECURE_API_URL: http://secure-auth-api:8000
+      AUTH_TEST_UNAVAILABLE_API_URL: http://auth-unavailable-api:8000
+      RUN_AUTH_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+      secure-auth-api:
+        condition: service_healthy
+      auth-unavailable-api:
         condition: service_healthy

@@ -10,4 +10,5 @@ os.environ.setdefault(
 )
 os.environ.setdefault("REDIS_URL", "redis://invalid.test:6379/0")
 os.environ.setdefault("FOUNDATION_DATA_VERSION", "unit-test-fixture-v1")
-os.environ.setdefault("JWT_SECRET", "unit-test-only-not-for-deployment")
+os.environ.setdefault("JWT_SECRET", "unit-test-secret-with-at-least-32-characters")
+os.environ.setdefault("AUTH_ALLOWED_ORIGIN", "http://testserver")

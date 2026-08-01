@@ -69,20 +69,31 @@ def test_clean_stack_is_migrated_initialized_and_ready() -> None:
 
 
 def test_preserved_explorer_apis_read_the_fixture() -> None:
-    corridors = httpx.get(
-        f"{API_URL}/api/canonical-network/corridors",
-        params={"bbox": "34.7,32.0,34.9,32.2"},
-        timeout=5,
-    )
-    accidents = httpx.get(
-        f"{API_URL}/api/accident-attribution/accidents",
-        params={"bbox": "34.7,32.0,34.9,32.2"},
-        timeout=5,
-    )
-    summary = httpx.get(
-        f"{API_URL}/api/accident-attribution/summary",
-        timeout=5,
-    )
+    with httpx.Client(base_url=API_URL) as client:
+        signup = client.post(
+            "/api/auth/signup",
+            json={"email": "foundation-explorer@example.com", "password": "test-password"},
+            timeout=5,
+        )
+        assert signup.status_code in {201, 409}
+        if signup.status_code == 409:
+            login = client.post(
+                "/api/auth/login",
+                json={"email": "foundation-explorer@example.com", "password": "test-password"},
+                timeout=5,
+            )
+            assert login.status_code == 200
+        corridors = client.get(
+            "/api/canonical-network/corridors",
+            params={"bbox": "34.7,32.0,34.9,32.2"},
+            timeout=5,
+        )
+        accidents = client.get(
+            "/api/accident-attribution/accidents",
+            params={"bbox": "34.7,32.0,34.9,32.2"},
+            timeout=5,
+        )
+        summary = client.get("/api/accident-attribution/summary", timeout=5)
 
     assert corridors.status_code == 200
     assert corridors.json()["corridors"][0]["corridor_id"] == "fixture-corridor-1"
