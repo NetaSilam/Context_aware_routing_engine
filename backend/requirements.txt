@@ -8,12 +8,3 @@ httpx==0.28.1
 pydantic[email]==2.10.3
 bcrypt==4.2.1
 PyJWT==2.10.1
-
-# For loading the foundation pipeline's parquet/geoparquet seed data into PostGIS
-# (versions match the foundation repo's requirements-canonical.txt for consistency)
-pandas==2.2.3
-pyarrow==20.0.0
-pyproj==3.7.1
-shapely==2.1.1
-geopandas==1.0.1
-pyogrio==0.11.0

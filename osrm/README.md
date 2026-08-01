@@ -22,6 +22,6 @@ Takes under 2 minutes total on a normal machine (Israel is a small extract).
 On Windows Git Bash, prefix each `docker run` with `MSYS_NO_PATHCONV=1` or the
 `/opt/car.lua` argument gets mangled into a Windows path.
 
-Once `israel-and-palestine-latest.osrm` (and its sibling files) exist here,
-`docker compose up` starts `osrm-routed` against them automatically - no
-further steps.
+The post-cleanup milestone has no Compose service that starts this graph. The
+new pinned OSRM profile, artifact contract, and service wiring are added by
+later routing tickets.

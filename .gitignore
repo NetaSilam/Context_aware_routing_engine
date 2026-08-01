@@ -15,6 +15,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 .vite/
+frontend/vite.config.js
+frontend/vite.config.d.ts
 
 # Test and coverage output
 .coverage.*
