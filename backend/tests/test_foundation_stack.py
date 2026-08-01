@@ -24,6 +24,13 @@ REDIS_URL = os.environ.get("REDIS_URL", "")
 FIXTURE_PATH = Path("/app/tests/fixtures/foundation_fixture.sql")
 
 
+@pytest.fixture(autouse=True)
+def clear_foundation_auth_limits() -> None:
+    client = redis.Redis.from_url(REDIS_URL)
+    for key in client.scan_iter("auth-rate:*"):
+        client.delete(key)
+
+
 def run_initializer(**environment_changes: str) -> subprocess.CompletedProcess[str]:
     environment = {**os.environ, **environment_changes}
     return subprocess.run(
@@ -54,7 +61,7 @@ def test_clean_stack_is_migrated_initialized_and_ready() -> None:
         ).fetchone()
         postgis_version = connection.execute("SELECT PostGIS_Version()").fetchone()[0]
 
-    assert migration == "0004"
+    assert migration == "0005"
     assert foundation[0] == "test-fixture-v1"
     assert len(foundation[1]) == 64
     assert foundation[2] == "fixture"

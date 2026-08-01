@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { updatePreferences } from "../api/auth";
-import { getRouteJob, submitRouteJob } from "../api/routeJobs";
+import { getRouteHistoryEntry, getRouteJob, runRouteHistoryAgain, submitRouteJob } from "../api/routeJobs";
 import type { SubmitRouteJobRequest } from "../api/routeJobs";
 import CoordinateAcquisition from "../components/route-jobs/CoordinateAcquisition";
 import RouteJobShell from "../components/route-jobs/RouteJobShell";
+import RouteHistoryPanel from "../components/route-jobs/RouteHistoryPanel";
 import type { DrivingExperience, UserProfile, VehicleType } from "../types/auth";
 import type { RouteJob } from "../types/routeJobs";
 
@@ -79,15 +80,46 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
     try {
       const submissionKey = window.crypto.randomUUID();
       const accepted = await submitRouteJob(payload, submissionKey);
-      pollAttempt.current = 0;
-      const url = new URL(window.location.href);
-      url.searchParams.set("routeJob", accepted.id);
-      window.history.replaceState({}, "", url);
-      setJobId(accepted.id);
-      setRouteStatus("polling");
+      activateJob(accepted.id);
     } catch (err) {
       setRouteStatus("failed");
       setRouteError(err instanceof Error ? err.message : "Could not submit route job.");
+    }
+  }
+
+  function activateJob(id: string) {
+    pollAttempt.current = 0;
+    const url = new URL(window.location.href);
+    url.searchParams.set("routeJob", id);
+    window.history.replaceState({}, "", url);
+    setJobId(id);
+    setRouteStatus("polling");
+  }
+
+  async function openHistory(jobIdToOpen: string) {
+    try {
+      const saved = await getRouteHistoryEntry(jobIdToOpen);
+      setJob(saved);
+      setJobId(null);
+      setRouteStatus("completed");
+      const url = new URL(window.location.href);
+      url.searchParams.set("routeJob", saved.id);
+      window.history.replaceState({}, "", url);
+    } catch (err) {
+      setRouteStatus("failed");
+      setRouteError(err instanceof Error ? err.message : "Could not open route history.");
+    }
+  }
+
+  async function runAgain(historyJobId: string) {
+    if (routeStatus === "submitting" || routeStatus === "polling") return;
+    setRouteStatus("submitting");
+    try {
+      const accepted = await runRouteHistoryAgain(historyJobId, window.crypto.randomUUID());
+      activateJob(accepted.id);
+    } catch (err) {
+      setRouteStatus("failed");
+      setRouteError(err instanceof Error ? err.message : "Could not run saved route again.");
     }
   }
 
@@ -141,6 +173,7 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
         onSubmit={submitRoute}
       />
       <RouteJobShell status={routeStatus} error={routeError ?? undefined} result={job?.result} />
+      <RouteHistoryPanel refreshKey={routeStatus === "completed" ? job?.id ?? null : null} onOpen={openHistory} onRunAgain={runAgain} />
     </main>
   );
 }

@@ -54,3 +54,29 @@ export interface RouteJob {
   failure: { code: string; message: string; retryable: boolean } | null;
   result: RouteJobResult | null;
 }
+
+export interface RouteHistorySummary {
+  id: string;
+  origin_label: string | null;
+  destination_label: string | null;
+  origin_longitude: number;
+  origin_latitude: number;
+  destination_longitude: number;
+  destination_latitude: number;
+  completed_at: string;
+  chosen_index: number;
+  route_count: number;
+  distance_m: number;
+  duration_seconds: number;
+  historical_accident_density_per_km: number;
+  coverage: number;
+  final_cost: number;
+  risk_choice_available: boolean;
+}
+
+export interface RouteHistoryPage {
+  items: RouteHistorySummary[];
+  offset: number;
+  limit: number;
+  has_more: boolean;
+}

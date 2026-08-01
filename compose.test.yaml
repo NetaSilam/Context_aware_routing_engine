@@ -230,6 +230,28 @@ services:
       queue-unavailable-api:
         condition: service_healthy
 
+  route-history-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_route_history_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      ROUTE_HISTORY_TEST_API_URL: http://api:8000
+      RUN_ROUTE_HISTORY_INTEGRATION: "true"
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      TESTING: "true"
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_started
+
   queue-unavailable-api:
     build: ./backend
     environment:
