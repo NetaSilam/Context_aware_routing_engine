@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 
 def create_app() -> FastAPI:
     # Validate required dependency configuration before the process begins serving.
-    get_settings()
+    settings = get_settings()
     app = FastAPI(
         title="Context-Aware Safe Routing Engine API",
         version="0.1.0",
@@ -24,6 +24,10 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(data_router, dependencies=[Depends(get_current_user)])
     app.include_router(auth_router)
+    if settings.testing:
+        from app.routing.test_scoring_router import router as test_scoring_router
+
+        app.include_router(test_scoring_router)
 
     return app
 
