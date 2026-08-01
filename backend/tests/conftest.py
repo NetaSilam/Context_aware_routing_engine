@@ -14,3 +14,5 @@ os.environ.setdefault("JWT_SECRET", "unit-test-secret-with-at-least-32-character
 os.environ.setdefault("AUTH_ALLOWED_ORIGIN", "http://testserver")
 os.environ.setdefault("OSRM_BASE_URL", "http://invalid.test/")
 os.environ.setdefault("EXPECTED_OSRM_GRAPH_VERSION", "unit-test-graph-v1")
+os.environ.setdefault("GEOCODER_BASE_URL", "http://invalid.test/search")
+os.environ.setdefault("GEOCODER_USER_AGENT", "road-risk-tests/1.0")

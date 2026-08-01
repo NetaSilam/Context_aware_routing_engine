@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     celery_task_time_limit_seconds: int = Field(default=60, ge=2, le=3600)
     route_worker_concurrency: int = Field(default=2, ge=1, le=32)
     route_queue_publish_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
+    geocoder_base_url: HttpUrl
+    geocoder_user_agent: str = Field(min_length=3, max_length=200)
+    geocoder_connect_timeout_seconds: float = Field(default=2.0, gt=0.0, le=10.0)
+    geocoder_response_timeout_seconds: float = Field(default=5.0, gt=0.0, le=30.0)
+    geocoder_query_min_length: int = Field(default=3, ge=1, le=20)
+    geocoder_query_max_length: int = Field(default=200, ge=20, le=500)
+    geocoder_result_limit: int = Field(default=5, ge=1, le=10)
+    geocoder_cache_ttl_seconds: int = Field(default=86_400, ge=60, le=604_800)
+    geocoder_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
+    geocoder_user_rate_limit: int = Field(default=10, ge=1, le=100)
+    geocoder_ip_rate_limit: int = Field(default=30, ge=1, le=300)
 
     @field_validator("database_url")
     @classmethod
@@ -96,6 +107,10 @@ class Settings(BaseSettings):
             raise ValueError("route job lease must be shorter than Celery visibility timeout")
         if self.celery_task_time_limit_seconds >= self.route_job_lease_seconds:
             raise ValueError("Celery hard task limit must be shorter than the route job lease")
+        if self.geocoder_query_min_length >= self.geocoder_query_max_length:
+            raise ValueError("geocoder query bounds must be ordered")
+        if self.geocoder_user_rate_limit > self.geocoder_ip_rate_limit:
+            raise ValueError("geocoder per-user limit cannot exceed the per-IP limit")
         return self
 
 

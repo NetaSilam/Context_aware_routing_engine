@@ -277,6 +277,38 @@ input {
   border-radius: 20px;
 }
 
+.coordinate-search-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: 18px;
+}
+
+.address-results {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.address-results button {
+  width: 100%;
+  text-align: left;
+}
+
+.geocoding-attribution {
+  color: #5c6c73;
+  font-size: 0.9rem;
+}
+
+.map-target-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 18px;
+}
+
 .corridor-map {
   width: 100%;
   height: 460px;
@@ -507,6 +539,10 @@ input {
   .filters-grid,
   .workspace-grid,
   .traffic-coverage-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .coordinate-search-grid {
     grid-template-columns: 1fr;
   }
 

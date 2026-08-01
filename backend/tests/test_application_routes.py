@@ -16,5 +16,6 @@ def test_preserved_api_boundaries_remain_registered() -> None:
     paths = {route.path for route in create_app().routes}
 
     assert "/api/auth/login" in paths
+    assert "/api/geocoding/search" in paths
     assert "/api/canonical-network/corridors" in paths
     assert "/api/accident-attribution/accidents" in paths

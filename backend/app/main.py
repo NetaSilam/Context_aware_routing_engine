@@ -11,6 +11,7 @@ from app.auth_routes import router as auth_router
 from app.config import get_settings
 from app.data_routes import router as data_router
 from app.health import router as health_router
+from app.geocoding.router import router as geocoding_router
 from app.routing.route_jobs import router as route_jobs_router
 from app.routing.route_jobs import recover_stale_route_jobs
 
@@ -35,6 +36,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(data_router, dependencies=[Depends(get_current_user)])
     app.include_router(auth_router)
+    app.include_router(geocoding_router)
     app.include_router(route_jobs_router)
     if settings.testing:
         from app.routing.test_scoring_router import router as test_scoring_router

@@ -6,6 +6,8 @@ vi.mock("react-leaflet", () => ({
   MapContainer: ({ children, ...props }: React.PropsWithChildren<Record<string, unknown>>) => <div {...props}>{children}</div>,
   TileLayer: () => null,
   Polyline: ({ positions }: { positions: unknown }) => <span data-route-line={JSON.stringify(positions)} />,
+  Marker: () => null,
+  useMapEvents: () => undefined,
 }));
 
 import PlanRoutePage from "./PlanRoutePage";

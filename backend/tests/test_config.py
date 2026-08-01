@@ -12,6 +12,8 @@ VALID_SETTINGS = {
     "jwt_secret": "test-secret-with-at-least-32-characters",
     "auth_allowed_origin": "http://localhost:5173",
     "osrm_base_url": "http://osrm:5000/",
+    "geocoder_base_url": "http://geocoder:5001/search",
+    "geocoder_user_agent": "road-risk-project/1.0",
 }
 
 
@@ -37,6 +39,8 @@ def test_foundation_configuration_accepts_async_dependency_urls() -> None:
         ("osrm_max_connections", 0),
         ("route_job_max_retries", 11),
         ("route_worker_concurrency", 0),
+        ("geocoder_user_agent", "x"),
+        ("geocoder_query_max_length", 501),
     ],
 )
 def test_foundation_configuration_rejects_invalid_values(
@@ -56,6 +60,8 @@ def test_foundation_configuration_has_no_dependency_url_defaults(monkeypatch: py
         "JWT_SECRET",
         "AUTH_ALLOWED_ORIGIN",
         "OSRM_BASE_URL",
+        "GEOCODER_BASE_URL",
+        "GEOCODER_USER_AGENT",
     ):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(ValidationError):

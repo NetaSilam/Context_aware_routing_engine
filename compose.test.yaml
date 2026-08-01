@@ -16,6 +16,8 @@ services:
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
       EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
 
   api:
     environment:
@@ -30,6 +32,11 @@ services:
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
       EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
       ROUTE_JOB_STALE_CREATED_SECONDS: "2"
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      GEOCODER_RESPONSE_TIMEOUT_SECONDS: "0.1"
+      GEOCODER_USER_RATE_LIMIT: "4"
+      GEOCODER_IP_RATE_LIMIT: "8"
 
   worker:
     environment:
@@ -40,6 +47,8 @@ services:
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
       EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
       TESTING: "true"
       ROUTE_JOB_LEASE_SECONDS: "12"
       ROUTE_JOB_MAX_RETRIES: "2"
@@ -107,6 +116,8 @@ services:
       AUTH_COOKIE_SECURE: "true"
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
       EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -131,6 +142,8 @@ services:
       AUTH_COOKIE_SECURE: "false"
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
       EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -206,6 +219,8 @@ services:
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
       TESTING: "true"
       ROUTE_JOB_STALE_CREATED_SECONDS: "2"
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
       QUEUE_UNAVAILABLE_API_URL: http://queue-unavailable-api:8000
     depends_on:
       api:
@@ -226,6 +241,8 @@ services:
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
       EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
       ROUTE_JOB_STALE_CREATED_SECONDS: "2"
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -236,3 +253,64 @@ services:
       interval: 1s
       timeout: 2s
       retries: 20
+
+  fake-geocoder:
+    build: ./backend
+    command: ["uvicorn", "tests.fake_geocoder.app:app", "--host", "0.0.0.0", "--port", "5001"]
+    expose:
+      - "5001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  geocoding-unavailable-api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://unavailable-redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      fake-geocoder:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  geocoding-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_geocoding_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      GEOCODING_TEST_API_URL: http://api:8000
+      GEOCODING_UNAVAILABLE_API_URL: http://geocoding-unavailable-api:8000
+      FAKE_GEOCODER_URL: http://fake-geocoder:5001
+      RUN_GEOCODING_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+      fake-geocoder:
+        condition: service_healthy
+      geocoding-unavailable-api:
+        condition: service_healthy

@@ -46,6 +46,8 @@ services:
       AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
       OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
       EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+      GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
+      GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,6 +64,8 @@ services:
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
       EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+      GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
+      GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -87,6 +91,8 @@ services:
       AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
       OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
       EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+      GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
+      GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
     depends_on:
       initialize:
         condition: service_completed_successfully

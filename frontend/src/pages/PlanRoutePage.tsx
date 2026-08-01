@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { updatePreferences } from "../api/auth";
 import { getRouteJob, submitRouteJob } from "../api/routeJobs";
+import type { SubmitRouteJobRequest } from "../api/routeJobs";
+import CoordinateAcquisition from "../components/route-jobs/CoordinateAcquisition";
 import RouteJobShell from "../components/route-jobs/RouteJobShell";
 import type { DrivingExperience, UserProfile, VehicleType } from "../types/auth";
 import type { RouteJob } from "../types/routeJobs";
@@ -19,12 +21,6 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
   const [vehicleType, setVehicleType] = useState(props.user.vehicle_type);
   const [avoidTolls, setAvoidTolls] = useState(props.user.avoid_tolls);
   const [avoidHighways, setAvoidHighways] = useState(props.user.avoid_highways);
-  const [originLongitude, setOriginLongitude] = useState("34.7800");
-  const [originLatitude, setOriginLatitude] = useState("32.0700");
-  const [destinationLongitude, setDestinationLongitude] = useState("34.7900");
-  const [destinationLatitude, setDestinationLatitude] = useState("32.0800");
-  const [originLabel, setOriginLabel] = useState("");
-  const [destinationLabel, setDestinationLabel] = useState("");
   const initialJobId = new URLSearchParams(window.location.search).get("routeJob");
   const [jobId, setJobId] = useState<string | null>(initialJobId);
   const [job, setJob] = useState<RouteJob | null>(null);
@@ -76,19 +72,13 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
     }
   }
 
-  async function submitRoute(event: React.FormEvent) {
-    event.preventDefault();
+  async function submitRoute(payload: SubmitRouteJobRequest) {
     if (routeStatus === "submitting" || routeStatus === "polling") return;
     setRouteStatus("submitting");
     setRouteError(null);
     try {
       const submissionKey = window.crypto.randomUUID();
-      const accepted = await submitRouteJob({
-        origin_longitude: Number(originLongitude), origin_latitude: Number(originLatitude),
-        destination_longitude: Number(destinationLongitude), destination_latitude: Number(destinationLatitude),
-        ...(originLabel ? { origin_label: originLabel } : {}),
-        ...(destinationLabel ? { destination_label: destinationLabel } : {}),
-      }, submissionKey);
+      const accepted = await submitRouteJob(payload, submissionKey);
       pollAttempt.current = 0;
       const url = new URL(window.location.href);
       url.searchParams.set("routeJob", accepted.id);
@@ -146,18 +136,10 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
           </form>
         ) : null}
       </section>
-      <section className="filters-panel" aria-label="Route coordinates">
-        <h2>Choose route coordinates</h2>
-        <form onSubmit={submitRoute} className="filters-grid">
-          <label className="filter-field">Origin longitude<input required type="number" step="any" value={originLongitude} onChange={(event) => setOriginLongitude(event.target.value)} /></label>
-          <label className="filter-field">Origin latitude<input required type="number" step="any" value={originLatitude} onChange={(event) => setOriginLatitude(event.target.value)} /></label>
-          <label className="filter-field">Origin label (optional)<input maxLength={200} value={originLabel} onChange={(event) => setOriginLabel(event.target.value)} /></label>
-          <label className="filter-field">Destination longitude<input required type="number" step="any" value={destinationLongitude} onChange={(event) => setDestinationLongitude(event.target.value)} /></label>
-          <label className="filter-field">Destination latitude<input required type="number" step="any" value={destinationLatitude} onChange={(event) => setDestinationLatitude(event.target.value)} /></label>
-          <label className="filter-field">Destination label (optional)<input maxLength={200} value={destinationLabel} onChange={(event) => setDestinationLabel(event.target.value)} /></label>
-          <button className="primary-button" type="submit" disabled={routeStatus === "submitting" || routeStatus === "polling"}>Compare routes</button>
-        </form>
-      </section>
+      <CoordinateAcquisition
+        disabled={routeStatus === "submitting" || routeStatus === "polling"}
+        onSubmit={submitRoute}
+      />
       <RouteJobShell status={routeStatus} error={routeError ?? undefined} result={job?.result} />
     </main>
   );
