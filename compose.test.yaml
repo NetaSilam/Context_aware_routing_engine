@@ -256,7 +256,8 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
-      REDIS_URL: redis://unavailable-redis:6379/0
+      REDIS_URL: redis://redis:6379/0
+      ROUTE_QUEUE_BROKER_URL: redis://unavailable-redis:6379/0
       FOUNDATION_DATA_VERSION: test-fixture-v1
       JWT_SECRET: test-only-secret-with-at-least-32-characters
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
@@ -268,6 +269,8 @@ services:
     depends_on:
       initialize:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     expose:
       - "8000"
     healthcheck:
@@ -333,6 +336,77 @@ services:
       api:
         condition: service_healthy
       fake-geocoder:
+        condition: service_healthy
+      geocoding-unavailable-api:
+        condition: service_healthy
+
+  abuse-api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/1
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      AUTH_COOKIE_SECURE: "false"
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      ROUTE_CREATION_USER_RATE_LIMIT: "100"
+      ROUTE_CREATION_IP_RATE_LIMIT: "200"
+      ROUTE_POLL_USER_RATE_LIMIT: "2"
+      ROUTE_POLL_IP_RATE_LIMIT: "20"
+      HISTORY_MUTATION_USER_RATE_LIMIT: "2"
+      HISTORY_MUTATION_IP_RATE_LIMIT: "20"
+      UNFINISHED_ROUTE_JOBS_PER_USER: "2"
+      UNFINISHED_ROUTE_JOBS_GLOBAL: "3"
+      REQUEST_BODY_MAX_BYTES: "1024"
+      REQUEST_QUERY_MAX_BYTES: "128"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      fake-geocoder:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  abuse-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_abuse_protection_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/1
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      ABUSE_TEST_API_URL: http://abuse-api:8000
+      ABUSE_UNAVAILABLE_API_URL: http://geocoding-unavailable-api:8000
+      FAKE_GEOCODER_URL: http://fake-geocoder:5001
+      RUN_ABUSE_INTEGRATION: "true"
+      ROUTE_CREATION_USER_RATE_LIMIT: "100"
+      ROUTE_CREATION_IP_RATE_LIMIT: "200"
+      ROUTE_POLL_USER_RATE_LIMIT: "2"
+      ROUTE_POLL_IP_RATE_LIMIT: "20"
+      HISTORY_MUTATION_USER_RATE_LIMIT: "2"
+      HISTORY_MUTATION_IP_RATE_LIMIT: "20"
+      UNFINISHED_ROUTE_JOBS_PER_USER: "2"
+      UNFINISHED_ROUTE_JOBS_GLOBAL: "3"
+      REQUEST_BODY_MAX_BYTES: "1024"
+      REQUEST_QUERY_MAX_BYTES: "128"
+    depends_on:
+      abuse-api:
         condition: service_healthy
       geocoding-unavailable-api:
         condition: service_healthy

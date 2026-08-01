@@ -278,6 +278,29 @@ def test_upstream_failures_have_stable_retry_behavior(
         assert attempts == 1
 
 
+def test_real_worker_releases_terminal_capacity_reservation_idempotently() -> None:
+    with httpx.Client(base_url=API_URL, timeout=20) as owner:
+        user = signup(owner, "capacity-release")
+        accepted = owner.post(
+            "/api/route-jobs",
+            json=route_payload(origin_longitude=34.7003),
+            headers=idempotency_headers(),
+        )
+        assert accepted.status_code == 202
+        job_id = accepted.json()["id"]
+        redis_client = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+        assert job_id in redis_client.smembers("route-capacity:global")
+        assert job_id in redis_client.smembers(f"route-capacity:user:{user['id']}")
+        failed = wait_for_terminal(owner, job_id, timeout=20)
+        assert failed["failure"]["code"] == "osrm_server_error"
+        assert job_id not in redis_client.smembers("route-capacity:global")
+        assert job_id not in redis_client.smembers(f"route-capacity:user:{user['id']}")
+
+        publish(job_id)
+        time.sleep(0.5)
+        assert job_id not in redis_client.smembers("route-capacity:global")
+
+
 def test_expired_lease_is_reclaimed_and_active_lease_is_not_claimed_twice() -> None:
     with httpx.Client(base_url=API_URL, timeout=10) as owner:
         user = signup(owner, "lease-owner")

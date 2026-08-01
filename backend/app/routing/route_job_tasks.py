@@ -14,6 +14,7 @@ from celery.exceptions import Retry
 from psycopg.types.json import Jsonb
 
 from app.config import get_settings
+from app.abuse_protection import release_route_capacity_sync
 from app.corridor_matcher import RouteCandidateGeometry, match_route_candidates
 from app.routing.osrm_client import (
     OsrmClient,
@@ -70,7 +71,7 @@ def _claim_job(job_id: str, lease_token: UUID) -> tuple[Any, ...] | None:
                   status IN ('created', 'queued')
                   OR (status = 'running' AND lease_expires_at <= now())
               )
-            RETURNING origin_longitude, origin_latitude,
+            RETURNING user_id, origin_longitude, origin_latitude,
                       destination_longitude, destination_latitude, snapshot
             """,
             (lease_token, settings.route_job_lease_seconds, job_id),
@@ -108,10 +109,10 @@ def _release_for_retry(job_id: str, lease_token: UUID) -> None:
 
 
 def _fail_claimed_job(
-    job_id: str, lease_token: UUID, code: str, message: str
-) -> None:
+    job_id: str, lease_token: UUID, user_id: int, code: str, message: str
+) -> bool:
     with psycopg.connect(_sync_database_url()) as connection:
-        connection.execute(
+        updated = connection.execute(
             """
             UPDATE app.route_jobs
             SET status = 'failed', error_code = %s, error_message = %s,
@@ -119,7 +120,10 @@ def _fail_claimed_job(
             WHERE id = %s AND status = 'running' AND lease_token = %s
             """,
             (code, message, job_id, lease_token),
-        )
+        ).rowcount
+    if updated:
+        release_route_capacity_sync(job_id, user_id)
+    return bool(updated)
 
 
 def _exercise_test_worker_loss(snapshot: dict[str, Any], job_id: str) -> None:
@@ -134,7 +138,7 @@ def _exercise_test_worker_loss(snapshot: dict[str, Any], job_id: str) -> None:
 
 
 def _calculate_result(job: tuple[Any, ...]) -> tuple[dict[str, Any], int, int]:
-    origin_longitude, origin_latitude, destination_longitude, destination_latitude, snapshot = job
+    _, origin_longitude, origin_latitude, destination_longitude, destination_latitude, snapshot = job
     with OsrmClient(settings) as osrm:
         osrm_result = osrm.request_routes(
             origin_longitude=origin_longitude,
@@ -241,6 +245,7 @@ class NoRouteFailure(Exception):
 )
 def execute_route_job(task: Any, job_id: str) -> None:
     lease_token = uuid4()
+    user_id: int | None = None
     try:
         job = _claim_job(job_id, lease_token)
         if job is None:
@@ -252,11 +257,12 @@ def execute_route_job(task: Any, job_id: str) -> None:
                 )
             return
 
-        snapshot = job[4]
+        user_id = int(job[0])
+        snapshot = job[5]
         _exercise_test_worker_loss(snapshot, job_id)
         result, chosen_index, route_count = _calculate_result(job)
         with psycopg.connect(_sync_database_url()) as connection:
-            connection.execute(
+            updated = connection.execute(
                 """
                 UPDATE app.route_jobs
                 SET status = 'completed', chosen_index = %s, route_count = %s,
@@ -271,13 +277,16 @@ def execute_route_job(task: Any, job_id: str) -> None:
                     job_id,
                     lease_token,
                 ),
-            )
+            ).rowcount
+        if updated:
+            release_route_capacity_sync(job_id, user_id)
     except Retry:
         raise
     except NoRouteFailure:
         _fail_claimed_job(
             job_id,
             lease_token,
+            user_id,
             "no_route",
             "No route was found between the submitted points.",
         )
@@ -286,6 +295,7 @@ def execute_route_job(task: Any, job_id: str) -> None:
             _fail_claimed_job(
                 job_id,
                 lease_token,
+                user_id,
                 error.code.value,
                 "The routing service remained unavailable after bounded retries.",
             )
@@ -300,15 +310,19 @@ def execute_route_job(task: Any, job_id: str) -> None:
         _fail_claimed_job(
             job_id,
             lease_token,
+            user_id,
             error.code.value,
             "The routing service returned an invalid permanent response.",
         )
     except (psycopg.OperationalError, psycopg.InterfaceError) as error:
         if task.request.retries >= settings.route_job_max_retries:
             try:
+                if user_id is None:
+                    return
                 _fail_claimed_job(
                     job_id,
                     lease_token,
+                    user_id,
                     "database_unavailable",
                     "The route database remained unavailable after bounded retries.",
                 )
@@ -325,9 +339,11 @@ def execute_route_job(task: Any, job_id: str) -> None:
         )
         raise task.retry(exc=error, countdown=countdown)
     except Exception:
-        _fail_claimed_job(
-            job_id,
-            lease_token,
-            "route_processing_failed",
-            "The route could not be processed.",
-        )
+        if user_id is not None:
+            _fail_claimed_job(
+                job_id,
+                lease_token,
+                user_id,
+                "route_processing_failed",
+                "The route could not be processed.",
+            )

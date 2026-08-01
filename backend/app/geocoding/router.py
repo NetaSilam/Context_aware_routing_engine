@@ -13,6 +13,7 @@ from app.auth import get_current_user
 from app.config import get_settings
 from app.geocoding.geocoder_client import GeocoderError, search_provider
 from app.redis_client import get_redis
+from app.request_bounds import reject_unexpected_query_parameters
 
 router = APIRouter(prefix="/api/geocoding", tags=["geocoding"])
 ATTRIBUTION = "© OpenStreetMap contributors"
@@ -99,6 +100,7 @@ async def search_addresses(
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     settings = get_settings()
+    reject_unexpected_query_parameters(request, {"q"})
     query = normalize_query(q)
     if not settings.geocoder_query_min_length <= len(query) <= settings.geocoder_query_max_length:
         raise HTTPException(

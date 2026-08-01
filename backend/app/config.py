@@ -29,6 +29,17 @@ class Settings(BaseSettings):
     auth_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     signup_rate_limit: int = Field(default=5, ge=1, le=100)
     login_rate_limit: int = Field(default=10, ge=1, le=100)
+    request_body_max_bytes: int = Field(default=16_384, ge=1024, le=1_048_576)
+    request_query_max_bytes: int = Field(default=1024, ge=64, le=16_384)
+    route_protection_window_seconds: int = Field(default=60, ge=1, le=3600)
+    route_creation_user_rate_limit: int = Field(default=10, ge=1, le=1000)
+    route_creation_ip_rate_limit: int = Field(default=30, ge=1, le=5000)
+    route_poll_user_rate_limit: int = Field(default=120, ge=1, le=10_000)
+    route_poll_ip_rate_limit: int = Field(default=300, ge=1, le=20_000)
+    history_mutation_user_rate_limit: int = Field(default=20, ge=1, le=1000)
+    history_mutation_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
+    unfinished_route_jobs_per_user: int = Field(default=3, ge=1, le=100)
+    unfinished_route_jobs_global: int = Field(default=100, ge=1, le=100_000)
     corridor_matcher_method: Literal["sampled-nearest"] = "sampled-nearest"
     corridor_matcher_version: str = Field(
         default="sampled-nearest-v1", min_length=1, max_length=100
@@ -57,6 +68,7 @@ class Settings(BaseSettings):
     celery_task_time_limit_seconds: int = Field(default=60, ge=2, le=3600)
     route_worker_concurrency: int = Field(default=2, ge=1, le=32)
     route_queue_publish_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
+    route_queue_broker_url: RedisDsn | None = None
     geocoder_base_url: HttpUrl
     geocoder_user_agent: str = Field(min_length=3, max_length=200)
     geocoder_connect_timeout_seconds: float = Field(default=2.0, gt=0.0, le=10.0)
@@ -111,6 +123,14 @@ class Settings(BaseSettings):
             raise ValueError("geocoder query bounds must be ordered")
         if self.geocoder_user_rate_limit > self.geocoder_ip_rate_limit:
             raise ValueError("geocoder per-user limit cannot exceed the per-IP limit")
+        if self.route_creation_user_rate_limit > self.route_creation_ip_rate_limit:
+            raise ValueError("route creation per-user limit cannot exceed the per-IP limit")
+        if self.route_poll_user_rate_limit > self.route_poll_ip_rate_limit:
+            raise ValueError("route polling per-user limit cannot exceed the per-IP limit")
+        if self.history_mutation_user_rate_limit > self.history_mutation_ip_rate_limit:
+            raise ValueError("history mutation per-user limit cannot exceed the per-IP limit")
+        if self.unfinished_route_jobs_per_user > self.unfinished_route_jobs_global:
+            raise ValueError("per-user unfinished job capacity cannot exceed global capacity")
         return self
 
 

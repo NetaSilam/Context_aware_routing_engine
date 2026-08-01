@@ -41,6 +41,13 @@ def test_foundation_configuration_accepts_async_dependency_urls() -> None:
         ("route_worker_concurrency", 0),
         ("geocoder_user_agent", "x"),
         ("geocoder_query_max_length", 501),
+        ("request_body_max_bytes", 100),
+        ("request_query_max_bytes", 20_000),
+        ("route_creation_user_rate_limit", 0),
+        ("route_poll_ip_rate_limit", 20_001),
+        ("history_mutation_user_rate_limit", 0),
+        ("unfinished_route_jobs_per_user", 0),
+        ("unfinished_route_jobs_global", 100_001),
     ],
 )
 def test_foundation_configuration_rejects_invalid_values(
@@ -92,6 +99,22 @@ def test_osrm_configuration_rejects_keepalive_pool_larger_than_total_pool() -> N
     ],
 )
 def test_route_recovery_configuration_rejects_unsafe_time_bounds(
+    overrides: dict[str, int],
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**VALID_SETTINGS, **overrides)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"route_creation_user_rate_limit": 3, "route_creation_ip_rate_limit": 2},
+        {"route_poll_user_rate_limit": 3, "route_poll_ip_rate_limit": 2},
+        {"history_mutation_user_rate_limit": 3, "history_mutation_ip_rate_limit": 2},
+        {"unfinished_route_jobs_per_user": 3, "unfinished_route_jobs_global": 2},
+    ],
+)
+def test_abuse_protection_configuration_rejects_inconsistent_limits(
     overrides: dict[str, int],
 ) -> None:
     with pytest.raises(ValidationError):

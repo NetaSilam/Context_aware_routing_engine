@@ -15,12 +15,15 @@ from app.geocoding.router import router as geocoding_router
 from app.routing.route_jobs import router as route_jobs_router
 from app.routing.route_jobs import history_router as route_history_router
 from app.routing.route_jobs import recover_stale_route_jobs
+from app.routing.route_jobs import reconcile_unfinished_route_job_capacity
+from app.request_bounds import RequestSizeLimitMiddleware
 
 logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await reconcile_unfinished_route_job_capacity()
     await recover_stale_route_jobs()
     yield
 
@@ -32,6 +35,11 @@ def create_app() -> FastAPI:
         title="Context-Aware Safe Routing Engine API",
         version="0.1.0",
         lifespan=lifespan,
+    )
+    app.add_middleware(
+        RequestSizeLimitMiddleware,
+        max_body_bytes=settings.request_body_max_bytes,
+        max_query_bytes=settings.request_query_max_bytes,
     )
 
     app.include_router(health_router)
