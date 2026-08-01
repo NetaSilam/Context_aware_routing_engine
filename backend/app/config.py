@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     osrm_response_timeout_seconds: float = Field(default=5.0, gt=0.0, le=30.0)
     osrm_max_connections: int = Field(default=20, ge=1, le=100)
     osrm_max_keepalive_connections: int = Field(default=10, ge=0, le=100)
+    expected_osrm_graph_version: str = Field(min_length=1, max_length=100)
+    route_region_min_longitude: float = Field(default=34.0, ge=-180, le=180)
+    route_region_max_longitude: float = Field(default=35.9, ge=-180, le=180)
+    route_region_min_latitude: float = Field(default=29.4, ge=-90, le=90)
+    route_region_max_latitude: float = Field(default=33.4, ge=-90, le=90)
 
     @field_validator("database_url")
     @classmethod
@@ -72,6 +77,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "OSRM_MAX_KEEPALIVE_CONNECTIONS cannot exceed OSRM_MAX_CONNECTIONS"
             )
+        if self.route_region_min_longitude >= self.route_region_max_longitude:
+            raise ValueError("route longitude bounds must be ordered")
+        if self.route_region_min_latitude >= self.route_region_max_latitude:
+            raise ValueError("route latitude bounds must be ordered")
         return self
 
 

@@ -15,6 +15,7 @@ services:
       JWT_SECRET: test-only-secret-with-at-least-32-characters
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
 
   api:
     environment:
@@ -27,6 +28,20 @@ services:
       LOGIN_RATE_LIMIT: "2"
       SIGNUP_RATE_LIMIT: "2"
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+
+  worker:
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+    depends_on:
+      fake-osrm:
+        condition: service_healthy
 
   frontend:
     profiles: ["development-ui"]
@@ -82,6 +97,7 @@ services:
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
       AUTH_COOKIE_SECURE: "true"
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -105,6 +121,7 @@ services:
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
       AUTH_COOKIE_SECURE: "false"
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -158,8 +175,27 @@ services:
       JWT_SECRET: test-only-secret-with-at-least-32-characters
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
       OSRM_CONTRACT_BASE_URL: http://fake-osrm:5000
       RUN_OSRM_CONTRACT_INTEGRATION: "true"
     depends_on:
       fake-osrm:
         condition: service_healthy
+
+  route-job-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_route_job_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      ROUTE_JOB_TEST_API_URL: http://api:8000
+      RUN_ROUTE_JOB_INTEGRATION: "true"
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_started

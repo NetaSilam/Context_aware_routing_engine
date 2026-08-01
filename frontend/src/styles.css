@@ -183,6 +183,25 @@ input {
   margin-top: 16px;
 }
 
+.route-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.route-candidate-grid dl,
+.route-version-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+}
+
+.route-candidate-grid dt,
+.route-version-details dt { color: #56676f; }
+.route-candidate-grid dd,
+.route-version-details dd { margin: 0; text-align: right; }
+
 .traffic-coverage-toggle-panel {
   display: flex;
   justify-content: space-between;

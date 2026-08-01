@@ -45,6 +45,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
       OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
+      EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,6 +61,7 @@ services:
       AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
+      EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -73,6 +75,24 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  worker:
+    build: ./backend
+    command: ["celery", "-A", "app.routing.route_job_tasks.celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+      FOUNDATION_DATA_VERSION: ${FOUNDATION_DATA_VERSION:?Set FOUNDATION_DATA_VERSION in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
+      OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
+      EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
