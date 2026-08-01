@@ -19,7 +19,7 @@ _bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def _jwt_secret() -> str:
-    return os.environ.get("JWT_SECRET", "dev_only_change_me")
+    return os.environ["JWT_SECRET"]
 
 
 def hash_password(password: str) -> str:
@@ -46,7 +46,7 @@ def decode_access_token(token: str) -> dict[str, Any]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token.") from exc
 
 
-def get_current_user(
+async def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
 ) -> dict[str, Any]:
     if credentials is None:
@@ -60,8 +60,8 @@ def get_current_user(
         FROM app.users WHERE id = :user_id
         """
     )
-    with get_engine().begin() as conn:
-        row = conn.execute(sql, {"user_id": user_id}).mappings().first()
+    async with get_engine().begin() as conn:
+        row = (await conn.execute(sql, {"user_id": user_id})).mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User no longer exists.")
     return dict(row)

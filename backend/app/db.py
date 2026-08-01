@@ -1,22 +1,15 @@
 from __future__ import annotations
 
-import os
+from functools import lru_cache
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-_engine: Engine | None = None
-
-
-def get_engine() -> Engine:
-    global _engine
-    if _engine is None:
-        database_url = os.environ["DATABASE_URL"]
-        _engine = create_engine(database_url, pool_pre_ping=True)
-    return _engine
+from app.config import get_settings
 
 
-def check_connection() -> bool:
-    with get_engine().connect() as conn:
-        conn.execute(text("SELECT 1"))
-    return True
+@lru_cache
+def get_engine() -> AsyncEngine:
+    return create_async_engine(
+        get_settings().database_url,
+        pool_pre_ping=True,
+    )

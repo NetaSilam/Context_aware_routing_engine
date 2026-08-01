@@ -43,7 +43,7 @@ class TokenResponse(BaseModel):
 
 
 @router.post("/signup", response_model=TokenResponse, status_code=201)
-def signup(payload: SignupRequest) -> TokenResponse:
+async def signup(payload: SignupRequest) -> TokenResponse:
     if len(payload.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
 
@@ -56,8 +56,8 @@ def signup(payload: SignupRequest) -> TokenResponse:
         """
     )
     try:
-        with get_engine().begin() as conn:
-            row = conn.execute(
+        async with get_engine().begin() as conn:
+            row = (await conn.execute(
                 sql,
                 {
                     "email": payload.email,
@@ -67,7 +67,7 @@ def signup(payload: SignupRequest) -> TokenResponse:
                     "avoid_tolls": payload.avoid_tolls,
                     "avoid_highways": payload.avoid_highways,
                 },
-            ).mappings().first()
+            )).mappings().first()
     except IntegrityError as exc:
         raise HTTPException(status_code=409, detail="An account with this email already exists.") from exc
 
@@ -75,10 +75,10 @@ def signup(payload: SignupRequest) -> TokenResponse:
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest) -> TokenResponse:
+async def login(payload: LoginRequest) -> TokenResponse:
     sql = text("SELECT id, email, password_hash FROM app.users WHERE email = :email")
-    with get_engine().begin() as conn:
-        row = conn.execute(sql, {"email": payload.email}).mappings().first()
+    async with get_engine().begin() as conn:
+        row = (await conn.execute(sql, {"email": payload.email})).mappings().first()
 
     if row is None or not verify_password(payload.password, row["password_hash"]):
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
@@ -87,12 +87,12 @@ def login(payload: LoginRequest) -> TokenResponse:
 
 
 @router.get("/me")
-def get_me(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+async def get_me(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     return user
 
 
 @router.patch("/me")
-def update_me(
+async def update_me(
     payload: PreferencesUpdate, user: dict[str, Any] = Depends(get_current_user)
 ) -> dict[str, Any]:
     updates = payload.model_dump(exclude_unset=True)
@@ -101,7 +101,7 @@ def update_me(
 
     set_clause = ", ".join(f"{key} = :{key}" for key in updates)
     sql = text(f"UPDATE app.users SET {set_clause} WHERE id = :user_id")
-    with get_engine().begin() as conn:
-        conn.execute(sql, {**updates, "user_id": user["id"]})
+    async with get_engine().begin() as conn:
+        await conn.execute(sql, {**updates, "user_id": user["id"]})
 
     return {**user, **updates}

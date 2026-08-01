@@ -41,7 +41,7 @@ def _corridor_build_description(row: dict[str, Any]) -> str:
 
 
 @router.get("/api/canonical-network/corridors")
-def list_corridors(
+async def list_corridors(
     bbox: str = Query(..., description="min_lon,min_lat,max_lon,max_lat (WGS84)"),
     limit: int = Query(DEFAULT_LIMIT, gt=0, le=MAX_LIMIT),
 ) -> dict[str, Any]:
@@ -72,9 +72,9 @@ def list_corridors(
         LIMIT :query_limit
         """
     )
-    with get_engine().begin() as conn:
+    async with get_engine().begin() as conn:
         rows = (
-            conn.execute(
+            await conn.execute(
                 sql,
                 {
                     "min_lon": min_lon,
@@ -84,9 +84,7 @@ def list_corridors(
                     "query_limit": limit + 1,
                 },
             )
-            .mappings()
-            .all()
-        )
+        ).mappings().all()
 
     truncated = len(rows) > limit
     rows = rows[:limit]
@@ -117,7 +115,7 @@ def list_corridors(
 
 
 @router.get("/api/canonical-network/corridors/{corridor_id}")
-def get_corridor(corridor_id: str) -> dict[str, Any]:
+async def get_corridor(corridor_id: str) -> dict[str, Any]:
     sql = text(
         """
         SELECT
@@ -137,11 +135,16 @@ def get_corridor(corridor_id: str) -> dict[str, Any]:
         ORDER BY official_segment_id
         """
     )
-    with get_engine().begin() as conn:
-        row = conn.execute(sql, {"corridor_id": corridor_id}).mappings().first()
+    async with get_engine().begin() as conn:
+        row = (await conn.execute(sql, {"corridor_id": corridor_id})).mappings().first()
         if row is None:
             raise HTTPException(status_code=404, detail=f"Unknown corridor_id '{corridor_id}'.")
-        links = [dict(link) for link in conn.execute(links_sql, {"corridor_id": corridor_id}).mappings().all()]
+        links = [
+            dict(link)
+            for link in (
+                await conn.execute(links_sql, {"corridor_id": corridor_id})
+            ).mappings().all()
+        ]
 
     result = dict(row)
     result["geometry"] = json.loads(result.pop("geometry_geojson"))
@@ -170,7 +173,7 @@ def _count_by(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
 
 
 @router.get("/api/accident-attribution/accidents")
-def list_accidents(
+async def list_accidents(
     bbox: str = Query(..., description="min_lon,min_lat,max_lon,max_lat (WGS84)"),
     limit: int = Query(DEFAULT_LIMIT, gt=0, le=MAX_LIMIT),
     status: str | None = Query(None, description="Filter by attribution_status"),
@@ -211,8 +214,8 @@ def list_accidents(
         LIMIT :query_limit
         """
     )
-    with get_engine().begin() as conn:
-        rows = conn.execute(sql, params).mappings().all()
+    async with get_engine().begin() as conn:
+        rows = (await conn.execute(sql, params)).mappings().all()
 
     truncated = len(rows) > limit
     rows = rows[:limit]
@@ -246,7 +249,7 @@ def list_accidents(
 
 
 @router.get("/api/accident-attribution/accidents/{accident_id}")
-def get_accident(accident_id: str) -> dict[str, Any]:
+async def get_accident(accident_id: str) -> dict[str, Any]:
     sql = text(
         """
         SELECT
@@ -262,8 +265,8 @@ def get_accident(accident_id: str) -> dict[str, Any]:
         WHERE accident_id = :accident_id
         """
     )
-    with get_engine().begin() as conn:
-        row = conn.execute(sql, {"accident_id": accident_id}).mappings().first()
+    async with get_engine().begin() as conn:
+        row = (await conn.execute(sql, {"accident_id": accident_id})).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail=f"Unknown accident_id '{accident_id}'.")
 
@@ -319,10 +322,10 @@ def get_accident(accident_id: str) -> dict[str, Any]:
 
 
 @router.get("/api/accident-attribution/summary")
-def accident_attribution_summary() -> dict[str, Any]:
+async def accident_attribution_summary() -> dict[str, Any]:
     sql = text("SELECT * FROM accident_attribution.accident_attribution_summary LIMIT 1")
-    with get_engine().begin() as conn:
-        row = conn.execute(sql).mappings().first()
+    async with get_engine().begin() as conn:
+        row = (await conn.execute(sql)).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Accident attribution summary table is empty.")
 

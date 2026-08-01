@@ -1,0 +1,38 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_DB: road_risk_test
+      POSTGRES_USER: road_risk_test
+      POSTGRES_PASSWORD: test-only-password
+
+  initialize:
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      FOUNDATION_DATA_MODE: fixture
+
+  api:
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-not-for-deployment
+
+  frontend:
+    profiles: ["development-ui"]
+
+  foundation-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_foundation_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      FOUNDATION_DATA_MODE: fixture
+      FOUNDATION_FIXTURE_PATH: /app/tests/fixtures/foundation_fixture.sql
+      FOUNDATION_TEST_API_URL: http://api:8000
+      RUN_FOUNDATION_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy

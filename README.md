@@ -7,15 +7,28 @@ profile and preferences. Built for Software Engineering for ML (Spring 2026).
 See [`PROJECT_REQUIREMENTS.md`](PROJECT_REQUIREMENTS.md) for the full spec,
 architecture, and TODO list.
 
-## Status
+## Development foundation
 
-The obsolete synchronous routing prototype has been removed. The route page is
-currently an asynchronous-job UI shell only.
+The route page is currently an asynchronous-job UI shell. The supporting
+foundation is now reproducible: Alembic owns the application schema, a one-shot
+initializer verifies foundation-data identity, and Compose starts PostGIS,
+Redis, FastAPI, and the Vite frontend in dependency order.
 
-This is a temporary post-cleanup milestone, not the final runnable deployment.
-Database migrations, deterministic initialization, PostGIS, Redis, and new
-Compose wiring are restored by the next implementation ticket. Until then,
-there is intentionally no supported full-stack startup command.
+Copy `.env.example` to `.env`, replace every placeholder, then run:
+
+```sh
+docker compose up --build
+```
+
+`FOUNDATION_DATA_MODE=fixture` loads the small committed explorer fixture. For
+an existing national dataset, use `FOUNDATION_DATA_MODE=verify`, provide its
+version and checksum, and ensure the required foundation tables are already
+present. Initialization refuses stale checksums, changed row counts, partial
+tables, or missing tables.
+
+Only the frontend publishes a host port. PostgreSQL, Redis, initialization, and
+FastAPI communicate only on the Compose network. Redis uses append-only storage;
+PostgreSQL and Redis both use persistent named volumes.
 
 The prepared data exports are documented in `data/README.md`. They are no
 longer loaded by FastAPI startup code.
@@ -28,10 +41,18 @@ remain in the repository during the routing rebuild.
 ```
 cd backend
 pip install -r requirements.txt
-pytest
+pytest -m "not integration"
 
 cd ../frontend
 npm install
 npm test
 npm run build   # tsc typecheck + production build
+```
+
+The clean-container foundation test uses only the committed SQL fixture:
+
+```sh
+docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml \
+  up --build --abort-on-container-exit --exit-code-from foundation-tests foundation-tests
+docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml down -v
 ```
