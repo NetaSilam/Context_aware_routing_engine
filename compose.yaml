@@ -32,7 +32,7 @@ services:
     command:
       - /bin/sh
       - -ec
-      - alembic upgrade head && python -m app.initialize_foundation
+      - alembic upgrade head && python -m app.initialize_foundation && python -m app.refresh_risk_data
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
@@ -40,6 +40,7 @@ services:
       FOUNDATION_DATA_MODE: ${FOUNDATION_DATA_MODE:-fixture}
       FOUNDATION_DATA_CHECKSUM: ${FOUNDATION_DATA_CHECKSUM:-}
       FOUNDATION_FIXTURE_PATH: /app/tests/fixtures/foundation_fixture.sql
+      RISK_DATA_VERSION: ${RISK_DATA_VERSION:?Set RISK_DATA_VERSION in .env}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
     depends_on:

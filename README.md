@@ -14,6 +14,17 @@ foundation is now reproducible: Alembic owns the application schema, a one-shot
 initializer verifies foundation-data identity, and Compose starts PostGIS,
 Redis, FastAPI, and the Vite frontend in dependency order.
 
+The initializer also builds an immutable `RISK_DATA_VERSION` from the prepared
+corridors and accident attributions. It reports source and output counts,
+confidence-tier counts, the full included year range, refresh duration, storage
+use, and the length-weighted risk p95. A validated version is activated
+transactionally; a failed refresh leaves the prior version active. Run a new
+national-data refresh as an initialization/maintenance operation, never from a
+public route request.
+
+The verified full-data row counts, p95, duration, and storage measurement are
+recorded in [`docs/RISK_DATA_REFRESH_REPORT.md`](docs/RISK_DATA_REFRESH_REPORT.md).
+
 Copy `.env.example` to `.env`, replace every placeholder, then run:
 
 ```sh
@@ -54,5 +65,7 @@ The clean-container foundation test uses only the committed SQL fixture:
 ```sh
 docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml \
   up --build --abort-on-container-exit --exit-code-from foundation-tests foundation-tests
+docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml \
+  up --build --abort-on-container-exit --exit-code-from risk-data-tests risk-data-tests
 docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml down -v
 ```
