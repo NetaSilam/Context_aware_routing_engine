@@ -4,7 +4,7 @@ from functools import lru_cache
 
 from typing import Literal
 
-from pydantic import Field, RedisDsn, field_validator
+from pydantic import Field, HttpUrl, RedisDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     corridor_matcher_low_coverage_threshold: float = Field(
         default=0.80, ge=0.0, le=1.0
     )
+    osrm_base_url: HttpUrl
+    osrm_connect_timeout_seconds: float = Field(default=2.0, gt=0.0, le=10.0)
+    osrm_response_timeout_seconds: float = Field(default=5.0, gt=0.0, le=30.0)
+    osrm_max_connections: int = Field(default=20, ge=1, le=100)
+    osrm_max_keepalive_connections: int = Field(default=10, ge=0, le=100)
 
     @field_validator("database_url")
     @classmethod
@@ -60,6 +65,14 @@ class Settings(BaseSettings):
         if any(fragment in normalized for fragment in placeholder_fragments):
             raise ValueError("JWT_SECRET must not be a placeholder")
         return value
+
+    @model_validator(mode="after")
+    def validate_osrm_connection_pool(self) -> "Settings":
+        if self.osrm_max_keepalive_connections > self.osrm_max_connections:
+            raise ValueError(
+                "OSRM_MAX_KEEPALIVE_CONNECTIONS cannot exceed OSRM_MAX_CONNECTIONS"
+            )
+        return self
 
 
 @lru_cache

@@ -14,6 +14,7 @@ services:
       RISK_DATA_VERSION: test-risk-v1
       JWT_SECRET: test-only-secret-with-at-least-32-characters
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
 
   api:
     environment:
@@ -25,6 +26,7 @@ services:
       AUTH_COOKIE_SECURE: "false"
       LOGIN_RATE_LIMIT: "2"
       SIGNUP_RATE_LIMIT: "2"
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
 
   frontend:
     profiles: ["development-ui"]
@@ -79,6 +81,7 @@ services:
       JWT_SECRET: test-only-secret-with-at-least-32-characters
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
       AUTH_COOKIE_SECURE: "true"
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -101,6 +104,7 @@ services:
       JWT_SECRET: test-only-secret-with-at-least-32-characters
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
       AUTH_COOKIE_SECURE: "false"
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -131,4 +135,31 @@ services:
       secure-auth-api:
         condition: service_healthy
       auth-unavailable-api:
+        condition: service_healthy
+
+  fake-osrm:
+    build: ./backend
+    command: ["uvicorn", "tests.fake_osrm.app:app", "--host", "0.0.0.0", "--port", "5000"]
+    expose:
+      - "5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  osrm-contract-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_osrm_contract_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://localhost:5173
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      OSRM_CONTRACT_BASE_URL: http://fake-osrm:5000
+      RUN_OSRM_CONTRACT_INTEGRATION: "true"
+    depends_on:
+      fake-osrm:
         condition: service_healthy
