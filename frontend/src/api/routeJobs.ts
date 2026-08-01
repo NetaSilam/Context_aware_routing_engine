@@ -14,13 +14,28 @@ async function parseError(response: Response): Promise<string> {
   return body.detail ?? `Route request failed (${response.status}).`;
 }
 
-export async function submitRouteJob(payload: SubmitRouteJobRequest): Promise<{ id: string; status: "queued" }> {
-  const response = await fetch("/api/route-jobs", {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json", Origin: window.location.origin },
-    body: JSON.stringify(payload),
-  });
+export async function submitRouteJob(
+  payload: SubmitRouteJobRequest,
+  idempotencyKey: string,
+): Promise<{ id: string; status: "queued" }> {
+  const request = () => fetch("/api/route-jobs", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: window.location.origin,
+        "Idempotency-Key": idempotencyKey,
+      },
+      body: JSON.stringify(payload),
+    });
+  let response: Response;
+  try {
+    response = await request();
+  } catch {
+    // The server may have persisted the first request before the connection
+    // failed. Retry the transport once with the same key.
+    response = await request();
+  }
   if (!response.ok) throw new Error(await parseError(response));
   return response.json() as Promise<{ id: string; status: "queued" }>;
 }

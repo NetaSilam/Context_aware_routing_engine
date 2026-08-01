@@ -54,7 +54,7 @@ def test_clean_stack_is_migrated_initialized_and_ready() -> None:
         ).fetchone()
         postgis_version = connection.execute("SELECT PostGIS_Version()").fetchone()[0]
 
-    assert migration == "0003"
+    assert migration == "0004"
     assert foundation[0] == "test-fixture-v1"
     assert len(foundation[1]) == 64
     assert foundation[2] == "fixture"

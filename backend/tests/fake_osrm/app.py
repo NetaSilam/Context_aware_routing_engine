@@ -53,6 +53,16 @@ async def route_candidates(
             content={"code": "InvalidOptions", "message": "unsupported exclusion"},
         )
 
+    # Ticket 9 failure fixtures select deterministic behavior through valid
+    # coordinates while keeping the worker's real HTTP contract unchanged.
+    origin_longitude = float(coordinates.split(";")[0].split(",")[0])
+    scenario_by_origin = {
+        34.7001: "no-route",
+        34.7002: "malformed-json",
+        34.7003: "server-error",
+    }
+    scenario = scenario_by_origin.get(origin_longitude, scenario)
+
     if scenario == "timeout":
         await asyncio.sleep(1.0)
     elif scenario == "delay":

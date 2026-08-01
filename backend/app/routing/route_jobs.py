@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 from celery import Celery
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import bindparam
 
 from app.auth import get_current_user, require_trusted_origin
@@ -18,6 +20,7 @@ from app.db import get_engine
 from app.routing.route_scoring_service import SCORING_FORMULA_VERSION
 
 router = APIRouter(prefix="/api/route-jobs", tags=["route-jobs"])
+logger = logging.getLogger(__name__)
 
 Coordinate = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 DisplayLabel = Annotated[str, Field(min_length=1, max_length=200)]
@@ -64,6 +67,7 @@ class RouteJobStatus(BaseModel):
     completed_at: datetime | None
     error_code: str | None
     error_message: str | None
+    failure: dict[str, Any] | None = None
     result: dict[str, Any] | None
 
 
@@ -88,15 +92,92 @@ def _validate_region(payload: RouteJobCreate) -> None:
 
 
 def _queue_client() -> Celery:
-    return Celery("road-risk-api", broker=str(get_settings().redis_url))
+    queue = Celery("road-risk-api", broker=str(get_settings().redis_url))
+    queue.conf.broker_connection_timeout = get_settings().route_queue_publish_timeout_seconds
+    return queue
 
 
 def _publish_job(job_id: str) -> None:
     queue = _queue_client()
     try:
-        queue.send_task("app.routing.route_job_tasks.execute_route_job", args=[job_id])
+        queue.send_task(
+            "app.routing.route_job_tasks.execute_route_job",
+            args=[job_id],
+            retry=False,
+        )
     finally:
         queue.close()
+
+
+async def _mark_published(job_id: UUID) -> None:
+    async with get_engine().begin() as connection:
+        await connection.execute(
+            text(
+                """
+                UPDATE app.route_jobs
+                SET status = 'queued', enqueued_at = now(), completed_at = NULL,
+                    error_code = NULL, error_message = NULL
+                WHERE id = :id AND status IN ('created', 'enqueue_failed', 'queued')
+                """
+            ),
+            {"id": job_id},
+        )
+
+
+async def _mark_enqueue_failed(job_id: UUID) -> None:
+    async with get_engine().begin() as connection:
+        await connection.execute(
+            text(
+                """
+                UPDATE app.route_jobs
+                SET status = 'enqueue_failed', error_code = 'queue_unavailable',
+                    error_message = 'The route worker queue is unavailable.',
+                    completed_at = now()
+                WHERE id = :id AND status IN ('created', 'enqueue_failed')
+                """
+            ),
+            {"id": job_id},
+        )
+
+
+async def recover_stale_route_jobs() -> None:
+    """Republish persisted jobs that a web process failed to enqueue."""
+    settings = get_settings()
+    try:
+        async with get_engine().begin() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        """
+                        UPDATE app.route_jobs
+                        SET enqueued_at = now()
+                        WHERE id IN (
+                            SELECT id FROM app.route_jobs
+                            WHERE status = 'created'
+                              AND created_at <= now() - make_interval(secs => :stale_seconds)
+                              AND (
+                                  enqueued_at IS NULL
+                                  OR enqueued_at <= now() - make_interval(secs => :stale_seconds)
+                              )
+                            FOR UPDATE SKIP LOCKED
+                        )
+                        RETURNING id
+                        """
+                    ),
+                    {"stale_seconds": settings.route_job_stale_created_seconds},
+                )
+            ).mappings().all()
+        for row in rows:
+            job_id = row["id"]
+            try:
+                await asyncio.to_thread(_publish_job, str(job_id))
+                await _mark_published(job_id)
+            except Exception:
+                await _mark_enqueue_failed(job_id)
+                logger.warning("Could not republish stale route job", extra={"job_id": str(job_id)})
+    except Exception:
+        # Recovery must not prevent the API process from serving liveness checks.
+        logger.exception("Route job startup recovery failed")
 
 
 @router.post(
@@ -108,10 +189,16 @@ def _publish_job(job_id: str) -> None:
 async def create_route_job(
     payload: RouteJobCreate,
     user: dict[str, Any] = Depends(get_current_user),
+    idempotency_key: Annotated[UUID | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
     _validate_region(payload)
     settings = get_settings()
     submitted_at = datetime.now(timezone.utc)
+    if idempotency_key is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Idempotency-Key header is required.",
+        )
     job_id = uuid4()
 
     active_version_sql = text(
@@ -125,68 +212,111 @@ async def create_route_job(
     insert_sql = text(
         """
         INSERT INTO app.route_jobs (
-            id, user_id, status,
+            id, user_id, idempotency_key, status,
             origin_longitude, origin_latitude,
             destination_longitude, destination_latitude,
             origin_label, destination_label, snapshot
         ) VALUES (
-            :id, :user_id, 'queued',
+            :id, :user_id, :idempotency_key, 'created',
             :origin_longitude, :origin_latitude,
             :destination_longitude, :destination_latitude,
             :origin_label, :destination_label, :snapshot
         )
+        ON CONFLICT (user_id, idempotency_key) DO NOTHING
+        RETURNING id, status, enqueued_at
         """
     ).bindparams(bindparam("snapshot", type_=JSONB))
-    async with get_engine().begin() as connection:
-        risk_version = (await connection.execute(active_version_sql)).mappings().first()
-        if risk_version is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="No compatible active risk data is available.",
-                headers={"Retry-After": "5"},
+    try:
+        async with get_engine().begin() as connection:
+            inserted = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT id, status, enqueued_at
+                        FROM app.route_jobs
+                        WHERE user_id = :user_id AND idempotency_key = :idempotency_key
+                        """
+                    ),
+                    {"user_id": user["id"], "idempotency_key": idempotency_key},
+                )
+            ).mappings().first()
+            if inserted is None:
+                risk_version = (
+                    await connection.execute(active_version_sql)
+                ).mappings().first()
+                if risk_version is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="No compatible active risk data is available.",
+                        headers={"Retry-After": "5"},
+                    )
+                snapshot = {
+                    "driving_experience": user["driving_experience"],
+                    "vehicle_type": user["vehicle_type"],
+                    "avoid_tolls": user["avoid_tolls"],
+                    "avoid_highways": user["avoid_highways"],
+                    "submitted_at": submitted_at.isoformat(),
+                    "risk_data_version": risk_version["version"],
+                    "reference_risk_p95": risk_version["reference_risk_p95"],
+                    "included_year_start": risk_version["included_year_start"],
+                    "included_year_end": risk_version["included_year_end"],
+                    "formula_version": SCORING_FORMULA_VERSION,
+                    "matcher_version": settings.corridor_matcher_version,
+                    "expected_graph_version": settings.expected_osrm_graph_version,
+                }
+                inserted = (
+                    await connection.execute(
+                        insert_sql,
+                        {
+                            "id": job_id,
+                            "user_id": user["id"],
+                            "idempotency_key": idempotency_key,
+                            **payload.model_dump(),
+                            "snapshot": snapshot,
+                        },
+                    )
+                ).mappings().first()
+                if inserted is None:
+                    inserted = (
+                        await connection.execute(
+                            text(
+                                """
+                                SELECT id, status, enqueued_at
+                                FROM app.route_jobs
+                                WHERE user_id = :user_id
+                                  AND idempotency_key = :idempotency_key
+                                """
+                            ),
+                            {"user_id": user["id"], "idempotency_key": idempotency_key},
+                        )
+                    ).mappings().one()
+            job_id = inserted["id"]
+            existing_status = inserted["status"]
+            stale_queued = (
+                existing_status == "queued"
+                and inserted["enqueued_at"] is not None
+                and (submitted_at - inserted["enqueued_at"]).total_seconds()
+                >= settings.route_job_stale_created_seconds
             )
-        snapshot = {
-            "driving_experience": user["driving_experience"],
-            "vehicle_type": user["vehicle_type"],
-            "avoid_tolls": user["avoid_tolls"],
-            "avoid_highways": user["avoid_highways"],
-            "submitted_at": submitted_at.isoformat(),
-            "risk_data_version": risk_version["version"],
-            "reference_risk_p95": risk_version["reference_risk_p95"],
-            "included_year_start": risk_version["included_year_start"],
-            "included_year_end": risk_version["included_year_end"],
-            "formula_version": SCORING_FORMULA_VERSION,
-            "matcher_version": settings.corridor_matcher_version,
-            "expected_graph_version": settings.expected_osrm_graph_version,
-        }
-        await connection.execute(
-            insert_sql,
-            {
-                "id": job_id,
-                "user_id": user["id"],
-                **payload.model_dump(),
-                "snapshot": snapshot,
-            },
-        )
+            should_publish = existing_status in {"created", "enqueue_failed"} or stale_queued
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The route job service is temporarily unavailable.",
+            headers={"Retry-After": "5"},
+        ) from exc
+
+    if not should_publish:
+        public_status = "failed" if existing_status == "enqueue_failed" else existing_status
+        return {"id": job_id, "status": public_status}
 
     try:
         await asyncio.to_thread(_publish_job, str(job_id))
+        await _mark_published(job_id)
     except Exception as exc:
-        # Ticket 9 adds republishing and idempotency. For this slice, preserve the
-        # accepted row and expose a controlled queue failure.
-        async with get_engine().begin() as connection:
-            await connection.execute(
-                text(
-                    """
-                    UPDATE app.route_jobs
-                    SET status = 'failed', error_code = 'queue_unavailable',
-                        error_message = 'The route worker queue is unavailable.',
-                        completed_at = now()
-                    WHERE id = :id
-                    """
-                ),
-                {"id": job_id},
-            )
+        await _mark_enqueue_failed(job_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The route worker queue is unavailable.",
@@ -211,10 +341,37 @@ async def get_route_job(
         WHERE id = :id AND user_id = :user_id
         """
     )
-    async with get_engine().begin() as connection:
-        row = (
-            await connection.execute(query, {"id": job_id, "user_id": user["id"]})
-        ).mappings().first()
+    try:
+        async with get_engine().begin() as connection:
+            row = (
+                await connection.execute(query, {"id": job_id, "user_id": user["id"]})
+            ).mappings().first()
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The route job service is temporarily unavailable.",
+            headers={"Retry-After": "5"},
+        ) from exc
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Route job not found.")
-    return dict(row)
+    response = dict(row)
+    if response["status"] == "enqueue_failed":
+        response["status"] = "failed"
+    if response["status"] == "created":
+        response["status"] = "queued"
+    response["failure"] = (
+        {
+            "code": response["error_code"],
+            "message": response["error_message"],
+            "retryable": response["error_code"] in {
+                "queue_unavailable",
+                "osrm_timeout",
+                "osrm_connection",
+                "osrm_server_error",
+                "database_unavailable",
+            },
+        }
+        if response["error_code"]
+        else None
+    )
+    return response

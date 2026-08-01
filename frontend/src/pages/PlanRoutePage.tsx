@@ -82,12 +82,13 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
     setRouteStatus("submitting");
     setRouteError(null);
     try {
+      const submissionKey = window.crypto.randomUUID();
       const accepted = await submitRouteJob({
         origin_longitude: Number(originLongitude), origin_latitude: Number(originLatitude),
         destination_longitude: Number(destinationLongitude), destination_latitude: Number(destinationLatitude),
         ...(originLabel ? { origin_label: originLabel } : {}),
         ...(destinationLabel ? { destination_label: destinationLabel } : {}),
-      });
+      }, submissionKey);
       pollAttempt.current = 0;
       const url = new URL(window.location.href);
       url.searchParams.set("routeJob", accepted.id);

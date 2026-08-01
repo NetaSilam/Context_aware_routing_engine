@@ -35,6 +35,8 @@ def test_foundation_configuration_accepts_async_dependency_urls() -> None:
         ("osrm_connect_timeout_seconds", 0),
         ("osrm_response_timeout_seconds", 31),
         ("osrm_max_connections", 0),
+        ("route_job_max_retries", 11),
+        ("route_worker_concurrency", 0),
     ],
 )
 def test_foundation_configuration_rejects_invalid_values(
@@ -73,3 +75,18 @@ def test_osrm_configuration_rejects_keepalive_pool_larger_than_total_pool() -> N
             osrm_max_connections=5,
             osrm_max_keepalive_connections=6,
         )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"celery_task_soft_time_limit_seconds": 60, "celery_task_time_limit_seconds": 60},
+        {"route_job_lease_seconds": 120, "celery_visibility_timeout_seconds": 120},
+        {"celery_task_time_limit_seconds": 90, "route_job_lease_seconds": 90},
+    ],
+)
+def test_route_recovery_configuration_rejects_unsafe_time_bounds(
+    overrides: dict[str, int],
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**VALID_SETTINGS, **overrides)

@@ -58,7 +58,7 @@ describe("PlanRoutePage", () => {
       destination_longitude: 34.79, destination_latitude: 32.08,
       origin_label: null, destination_label: null, created_at: new Date().toISOString(),
       started_at: new Date().toISOString(), completed_at: new Date().toISOString(),
-      error_code: null, error_message: null,
+      error_code: null, error_message: null, failure: null,
       result: {
         schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
         safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
@@ -80,6 +80,9 @@ describe("PlanRoutePage", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Route job completed" })).toBeTruthy());
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][0]).toBe("/api/route-jobs");
+    expect(fetchMock.mock.calls[0][1]?.headers).toEqual(expect.objectContaining({
+      "Idempotency-Key": expect.any(String),
+    }));
     expect(window.location.search).toContain(`routeJob=${completedJob.id}`);
     expect(screen.getByText(/Route 1 — recommended/)).toBeTruthy();
   });
@@ -93,7 +96,7 @@ describe("PlanRoutePage", () => {
       destination_longitude: 34.79, destination_latitude: 32.08,
       origin_label: null, destination_label: null, created_at: new Date().toISOString(),
       started_at: new Date().toISOString(), completed_at: null,
-      error_code: null, error_message: null, result: null,
+      error_code: null, error_message: null, failure: null, result: null,
     };
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify(runningJob), { status: 200, headers: { "Content-Type": "application/json" } }),

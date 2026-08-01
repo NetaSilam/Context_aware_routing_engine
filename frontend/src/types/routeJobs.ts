@@ -51,5 +51,6 @@ export interface RouteJob {
   completed_at: string | null;
   error_code: string | null;
   error_message: string | null;
+  failure: { code: string; message: string; retryable: boolean } | null;
   result: RouteJobResult | null;
 }

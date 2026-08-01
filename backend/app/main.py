@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 
 from fastapi import Depends, FastAPI
 
@@ -10,8 +12,15 @@ from app.config import get_settings
 from app.data_routes import router as data_router
 from app.health import router as health_router
 from app.routing.route_jobs import router as route_jobs_router
+from app.routing.route_jobs import recover_stale_route_jobs
 
 logging.basicConfig(level=logging.INFO)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    await recover_stale_route_jobs()
+    yield
 
 
 def create_app() -> FastAPI:
@@ -20,6 +29,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Context-Aware Safe Routing Engine API",
         version="0.1.0",
+        lifespan=lifespan,
     )
 
     app.include_router(health_router)

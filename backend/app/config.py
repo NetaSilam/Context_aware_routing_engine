@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     route_region_max_longitude: float = Field(default=35.9, ge=-180, le=180)
     route_region_min_latitude: float = Field(default=29.4, ge=-90, le=90)
     route_region_max_latitude: float = Field(default=33.4, ge=-90, le=90)
+    route_job_stale_created_seconds: int = Field(default=30, ge=1, le=3600)
+    route_job_lease_seconds: int = Field(default=90, ge=2, le=600)
+    route_job_max_retries: int = Field(default=3, ge=0, le=10)
+    route_job_retry_backoff_max_seconds: int = Field(default=30, ge=1, le=300)
+    celery_visibility_timeout_seconds: int = Field(default=120, ge=3, le=3600)
+    celery_task_soft_time_limit_seconds: int = Field(default=45, ge=1, le=3600)
+    celery_task_time_limit_seconds: int = Field(default=60, ge=2, le=3600)
+    route_worker_concurrency: int = Field(default=2, ge=1, le=32)
+    route_queue_publish_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
 
     @field_validator("database_url")
     @classmethod
@@ -81,6 +90,12 @@ class Settings(BaseSettings):
             raise ValueError("route longitude bounds must be ordered")
         if self.route_region_min_latitude >= self.route_region_max_latitude:
             raise ValueError("route latitude bounds must be ordered")
+        if self.celery_task_soft_time_limit_seconds >= self.celery_task_time_limit_seconds:
+            raise ValueError("Celery soft task limit must be below the hard task limit")
+        if self.route_job_lease_seconds >= self.celery_visibility_timeout_seconds:
+            raise ValueError("route job lease must be shorter than Celery visibility timeout")
+        if self.celery_task_time_limit_seconds >= self.route_job_lease_seconds:
+            raise ValueError("Celery hard task limit must be shorter than the route job lease")
         return self
 
 

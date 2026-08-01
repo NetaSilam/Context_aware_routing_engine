@@ -78,7 +78,7 @@ services:
 
   worker:
     build: ./backend
-    command: ["celery", "-A", "app.routing.route_job_tasks.celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]
+    command: ["celery", "-A", "app.routing.route_job_tasks.celery_app", "worker", "--loglevel=INFO"]
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
