@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 from fastapi import APIRouter
@@ -90,6 +91,27 @@ async def _redis_readiness() -> dict[str, str]:
     return {"status": "ready"}
 
 
+async def _osrm_compatibility_readiness(risk_data_version: str | None) -> dict[str, str]:
+    settings = get_settings()
+    path = settings.osrm_deployment_manifest_path
+    if not settings.osrm_compatibility_required:
+        return {"status": "ready"}
+    if path is None or not path.is_file():
+        raise RuntimeError("OSRM deployment compatibility manifest is unavailable")
+    try:
+        combinations = json.loads(path.read_text(encoding="utf-8"))["tested_combinations"]
+    except (OSError, ValueError, KeyError) as exc:
+        raise RuntimeError("OSRM deployment compatibility manifest is invalid") from exc
+    expected = {
+        "graph_version": settings.expected_osrm_graph_version,
+        "corridor_risk_version": risk_data_version,
+        "matcher_version": settings.corridor_matcher_version,
+    }
+    if expected not in combinations:
+        raise RuntimeError("OSRM graph, risk-data, and matcher combination is unverified")
+    return {"status": "ready"}
+
+
 @router.get("/health/ready")
 async def readiness() -> JSONResponse:
     timeout = get_settings().readiness_timeout_seconds
@@ -99,6 +121,13 @@ async def readiness() -> JSONResponse:
             checks[name] = await asyncio.wait_for(check(), timeout=timeout)
         except Exception as exc:
             checks[name] = {"status": "unavailable", "reason": str(exc)}
+    try:
+        risk_data_version = checks.get("database", {}).get("risk_data_version")
+        checks["osrm"] = await asyncio.wait_for(
+            _osrm_compatibility_readiness(risk_data_version), timeout=timeout
+        )
+    except Exception as exc:
+        checks["osrm"] = {"status": "unavailable", "reason": str(exc)}
 
     ready = all(check["status"] == "ready" for check in checks.values())
     return JSONResponse(

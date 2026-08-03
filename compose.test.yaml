@@ -1,4 +1,6 @@
 services:
+  osrm:
+    profiles: ["real-osrm"]
   postgres:
     environment:
       POSTGRES_DB: road_risk_test
@@ -20,6 +22,13 @@ services:
       GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
 
   api:
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      fake-osrm:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
       REDIS_URL: redis://redis:6379/0
@@ -31,6 +40,7 @@ services:
       SIGNUP_RATE_LIMIT: "2"
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
       EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      OSRM_COMPATIBILITY_REQUIRED: "false"
       ROUTE_JOB_STALE_CREATED_SECONDS: "2"
       GEOCODER_BASE_URL: http://fake-geocoder:5001/search
       GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
@@ -39,6 +49,13 @@ services:
       GEOCODER_IP_RATE_LIMIT: "8"
 
   worker:
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      fake-osrm:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
       REDIS_URL: redis://redis:6379/0
@@ -47,6 +64,7 @@ services:
       AUTH_ALLOWED_ORIGIN: http://localhost:5173
       OSRM_BASE_URL: http://fake-osrm:5000/normal/
       EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      OSRM_COMPATIBILITY_REQUIRED: "false"
       GEOCODER_BASE_URL: http://fake-geocoder:5001/search
       GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
       TESTING: "true"
@@ -57,10 +75,6 @@ services:
       CELERY_TASK_SOFT_TIME_LIMIT_SECONDS: "8"
       CELERY_TASK_TIME_LIMIT_SECONDS: "10"
       ROUTE_WORKER_CONCURRENCY: "1"
-    depends_on:
-      fake-osrm:
-        condition: service_healthy
-
   frontend:
     profiles: ["development-ui"]
 

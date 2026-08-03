@@ -1,0 +1,8 @@
+{
+  "graph_version": "israel-palestine-2026-07-31-osrm-6.0.0-profile-v1",
+  "osrm_image": "ghcr.io/project-osrm/osrm-backend:v6.0.0@sha256:729461bcc9ae9e6aafa92c0f93db9b060a32e85d5e72092c01ae4a4a9f1eb564",
+  "profile": "road-risk-car.lua",
+  "archive_url": "",
+  "archive_sha256": "",
+  "archive_filename": "israel-palestine-2026-07-31-osrm-6.0.0-profile-v1.tar.gz"
+}

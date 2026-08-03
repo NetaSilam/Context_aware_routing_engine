@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from typing import Literal
 
@@ -55,6 +56,8 @@ class Settings(BaseSettings):
     osrm_max_connections: int = Field(default=20, ge=1, le=100)
     osrm_max_keepalive_connections: int = Field(default=10, ge=0, le=100)
     expected_osrm_graph_version: str = Field(min_length=1, max_length=100)
+    osrm_deployment_manifest_path: Path | None = None
+    osrm_compatibility_required: bool = False
     route_region_min_longitude: float = Field(default=34.0, ge=-180, le=180)
     route_region_max_longitude: float = Field(default=35.9, ge=-180, le=180)
     route_region_min_latitude: float = Field(default=29.4, ge=-90, le=90)

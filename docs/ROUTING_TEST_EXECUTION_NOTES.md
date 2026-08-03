@@ -1,5 +1,19 @@
 # Routing Test Execution Notes
 
+## 2026-08-03 Ticket 13 real-graph verification deferrals
+
+- Local self-hosted OSRM smoke testing exercised the frozen representative corpus with normal,
+  `motorway`, `toll`, and `motorway,toll` exclusions. Candidate counts and response timing are
+  recorded in `docs/CORRIDOR_MATCHER_BENCHMARK.md`.
+- The national PostGIS corridor-risk version was unavailable to that local OSRM container, so
+  coverage and matcher timing for restricted-route geometries were not measured. This is a
+  user-approved deferral, not a pass. Resolution: start/provide the national risk version, run
+  the corpus through every exclusion combination, record coverage/matcher timing, and update the
+  tested compatibility evidence. Ticket 15 must disclose it.
+- The graph archive has not been externally published. The committed manifest template and setup
+  command deliberately fail until a real URL/checksum is supplied; this remains a separate
+  user-approved deferral that Ticket 15 must disclose.
+
 ## 2026-08-01 frontend timing exception
 
 - Environment: Docker Compose using the repository's `node:20-slim` frontend image; the image

@@ -28,6 +28,19 @@ services:
     volumes:
       - redis_data:/data
 
+  osrm:
+    image: ghcr.io/project-osrm/osrm-backend:v6.0.0@sha256:729461bcc9ae9e6aafa92c0f93db9b060a32e85d5e72092c01ae4a4a9f1eb564
+    command: ["osrm-routed", "--algorithm", "mld", "/data/israel-and-palestine-260731.osrm"]
+    volumes:
+      - ./osrm/data:/data:ro
+    expose:
+      - "5000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null 'http://localhost:5000/nearest/v1/driving/34.78,32.08' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
   initialize:
     build: ./backend
     command:
@@ -64,6 +77,8 @@ services:
       AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
       OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
       EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+      OSRM_DEPLOYMENT_MANIFEST_PATH: /osrm/deployment-compatibility.json
+      OSRM_COMPATIBILITY_REQUIRED: "true"
       GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
       GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
     depends_on:
@@ -71,6 +86,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    volumes:
+      - ./osrm/deployment-compatibility.json:/osrm/deployment-compatibility.json:ro
     expose:
       - "8000"
     healthcheck:
@@ -91,6 +108,8 @@ services:
       AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
       OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
       EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+      OSRM_DEPLOYMENT_MANIFEST_PATH: /osrm/deployment-compatibility.json
+      OSRM_COMPATIBILITY_REQUIRED: "true"
       GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
       GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
     depends_on:
@@ -98,6 +117,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    volumes:
+      - ./osrm/deployment-compatibility.json:/osrm/deployment-compatibility.json:ro
     restart: unless-stopped
 
   frontend:

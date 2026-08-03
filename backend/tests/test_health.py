@@ -19,8 +19,12 @@ def test_readiness_reports_an_unavailable_required_dependency(monkeypatch) -> No
     async def available_redis() -> dict[str, str]:
         return {"status": "ready"}
 
+    async def available_osrm(_: str | None) -> dict[str, str]:
+        return {"status": "ready"}
+
     monkeypatch.setattr(health, "_database_readiness", unavailable_database)
     monkeypatch.setattr(health, "_redis_readiness", available_redis)
+    monkeypatch.setattr(health, "_osrm_compatibility_readiness", available_osrm)
 
     with TestClient(create_app()) as client:
         ready_response = client.get("/health/ready")
@@ -35,6 +39,7 @@ def test_readiness_reports_an_unavailable_required_dependency(monkeypatch) -> No
                 "reason": "test database unavailable",
             },
             "redis": {"status": "ready"},
+            "osrm": {"status": "ready"},
         },
     }
     assert live_response.status_code == 200

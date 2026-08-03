@@ -120,3 +120,25 @@ docker run --rm --network ticket4national_default --env-file .env.test \
 docker compose --env-file .env.test -p ticket5matcher \
   -f compose.yaml -f compose.test.yaml run --build --rm corridor-matcher-tests
 ```
+
+## Ticket 13 real-OSRM exclusion smoke (manual, 2026-08-03)
+
+The pinned local graph and profile were served with `osrm-routed --algorithm mld` and queried
+using all six cases in `backend/tests/fixtures/representative_route_corpus.json`. This is manual
+deployment evidence, not authoritative automated coverage. Each request used full GeoJSON and
+`alternatives=3`; one warm request preceded one measured request per case. The graph/image/profile
+identity is `israel-palestine-2026-07-31-osrm-6.0.0-profile-v1`, OSRM `v6.0.0` digest
+`729461…564`, and `osrm/road-risk-car.lua`.
+
+| Exclusion | Candidate counts (short → parallel) | Median response | Max response | Result |
+| --- | --- | ---: | ---: | --- |
+| none | 3, 3, 3, 3, 3, 3 | 5.46 ms | 14.68 ms | pass |
+| motorway | 3, 2, 2, 1, 1, 1 | 2.93 ms | 4.86 ms | pass |
+| toll | 3, 2, 3, 3, 3, 3 | 2.57 ms | 3.13 ms | pass |
+| motorway,toll | 3, 2, 2, 1, 1, 1 | 2.22 ms | 3.20 ms | pass |
+
+Single-candidate responses are valid by the OSRM contract and correctly demonstrate that hard
+exclusions can remove alternatives. The Ticket 5 PostGIS benchmark already records 100% normal
+mode coverage and matcher performance. The same national PostGIS dataset was not available in
+this smoke container, so exclusion-mode coverage was not recomputed here; the real deployment
+must rerun the matcher benchmark for each exclusion mode before any broader performance claim.

@@ -381,17 +381,24 @@ contract; 8. Deliver the first complete route-job slice.
       and combined motorway+toll exclusion in one prepared graph.
 - [ ] Graph preparation and serving use the same profile/image/toolchain and include a real
       service health/readiness check.
-- [ ] A versioned prepared graph archive is published outside normal Git with a checksum.
-- [ ] A documented setup command downloads, verifies, and extracts the archive into an ignored
-      data directory.
+- [ ] **User-approved deferral:** a versioned artifact manifest template records the archive
+      URL/checksum fields, but external archive publication is deferred tech debt. Ticket 15
+      must disclose it and cannot claim clean-machine graph-download verification until a real
+      URL/checksum is supplied.
+- [ ] A documented setup command downloads, verifies, and extracts a published archive into an
+      ignored data directory, and fails clearly until the deferred URL/checksum are supplied.
 - [ ] A separate documented command can rebuild the graph from the pinned OSM input and
       profile.
 - [ ] The deployment manifest records graph, corridor-risk, and matcher versions as a tested
       combination.
 - [ ] Unknown/incompatible combinations fail or degrade readiness rather than silently serving
       unverified matches.
-- [ ] Representative real routes meet the recorded coverage and performance gates with every
-      exclusion combination.
+- [ ] **User-approved deferral:** all four exclusion modes have local real-OSRM route/candidate/
+      time smoke evidence, but national PostGIS corridor-risk coverage and matcher-performance
+      measurements for those geometries remain pending because the national risk-data environment
+      was unavailable. Start/provide the national risk version, run the representative corpus for
+      every exclusion combination, record coverage and matcher timing, and update compatibility
+      evidence. Ticket 15 must disclose this and cannot claim this verification passed.
 - [ ] Optional smoke tests verify real graph routing, one/multiple candidate behavior,
       exclusions, and version reporting; authoritative automated tests still use fake OSRM.
 
@@ -466,3 +473,5 @@ required test category, measured performance, abuse resistance, and clean-machin
 - [ ] The final report states the verified accident/corridor counts, actual accident-year range,
       risk limitations, OSRM-candidate limitation, TA feedback resolutions, and measured rather
       than promised performance.
+      It must also disclose the Ticket 13 deferred graph-archive publication and restricted-route
+      national-coverage/matcher measurements until each is actually verified.

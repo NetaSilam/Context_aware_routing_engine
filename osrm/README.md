@@ -38,7 +38,34 @@ Takes under 2 minutes total on a normal machine (Israel is a small extract).
 On Windows Git Bash, prefix each `docker run` with `MSYS_NO_PATHCONV=1` or the
 `/opt/car.lua` argument gets mangled into a Windows path.
 
-The graph is local benchmark/manual-test input, not an automated-test
-dependency. Graph archive publishing/download, runtime Compose wiring, health
-checks, compatibility enforcement, and full exclusion smoke tests remain in
-the later deployment ticket.
+The graph is local benchmark/manual-test input, not an automated-test dependency.
+
+## Artifact delivery (Ticket 13 deferral)
+
+`graph-artifact-manifest.template.json` records the graph/profile/image identity and the
+fields required for an external archive. Archive publication is user-approved deferred tech debt:
+copy the template to an ignored manifest, fill `archive_url` and `archive_sha256` only after the
+archive is actually published, then run:
+
+```sh
+python3 osrm/download_graph.py --manifest osrm/graph-artifact-manifest.json
+```
+
+The command fails clearly while those fields are empty. It downloads, verifies, and extracts
+into ignored `osrm/data`. Ticket 15 must disclose this deferral and must not claim clean-machine
+archive-download verification until publication occurs.
+
+The independent reproducible rebuild command is:
+
+```sh
+./osrm/rebuild_graph.sh
+```
+
+It downloads the pinned PBF when needed, verifies its checksum, and runs extract, partition, and
+customize with the same pinned image and profile. Optional/manual real-graph smoke checks use the
+frozen representative corpus and are never authoritative automated tests.
+
+The 2026-08-03 smoke covers all four hard-preference combinations, but does not replace national
+PostGIS matching measurements. Before final evidence, run the corpus with every exclusion against
+the active national risk version, record coverage and matcher timing, and update the compatibility
+evidence. See `docs/CORRIDOR_MATCHER_BENCHMARK.md`.

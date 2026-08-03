@@ -393,7 +393,9 @@ crash and not a guarantee of the globally safest possible route.
 30. **OSRM artifact.** Publish the full prepared graph as a versioned archive outside normal
     Git. A setup command downloads it, verifies a checksum, and extracts it into an ignored
     data directory. Also document a reproducible graph rebuild. Automated tests never download
-    this artifact.
+    this artifact. **Ticket 13 user-approved deferral:** until publication authority is available,
+    retain a versioned manifest template with empty URL/checksum fields and a setup command that
+    fails clearly. Ticket 15 must disclose this and cannot claim clean-machine download validation.
 
 31. **Compatibility manifest.** Record the OSRM graph version, corridor-risk version, and
     matcher version as a tested deployment combination. Exact source-file equality is not
