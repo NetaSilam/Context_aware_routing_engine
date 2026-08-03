@@ -26,6 +26,7 @@ from app.config import get_settings
 from app.db import get_engine
 from app.routing.route_scoring_service import SCORING_FORMULA_VERSION
 from app.request_bounds import reject_unexpected_query_parameters
+from app.operations import log_route_event
 
 router = APIRouter(prefix="/api/route-jobs", tags=["route-jobs"])
 history_router = APIRouter(prefix="/api/route-history", tags=["route-history"])
@@ -429,9 +430,17 @@ async def create_route_job(
     try:
         await asyncio.to_thread(_publish_job, str(job_id))
         await _mark_published(job_id)
+        log_route_event("route_job_enqueued", job_id=str(job_id), stage="queued")
     except Exception as exc:
         await _mark_enqueue_failed(job_id)
         await release_route_capacity(str(job_id), int(user["id"]))
+        log_route_event(
+            "route_job_enqueue_failed",
+            job_id=str(job_id),
+            stage="queue",
+            error_code="queue_unavailable",
+            level=logging.WARNING,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The route worker queue is unavailable.",

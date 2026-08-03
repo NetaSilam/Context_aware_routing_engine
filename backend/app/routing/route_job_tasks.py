@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import time
 from dataclasses import asdict
 from datetime import datetime
 from typing import Any
@@ -14,6 +15,7 @@ from celery.exceptions import Retry
 from psycopg.types.json import Jsonb
 
 from app.config import get_settings
+from app.operations import log_route_event, operations_metrics
 from app.abuse_protection import release_route_capacity_sync
 from app.corridor_matcher import RouteCandidateGeometry, match_route_candidates
 from app.routing.osrm_client import (
@@ -38,6 +40,7 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     worker_concurrency=settings.route_worker_concurrency,
+    worker_hijack_root_logger=False,
     task_soft_time_limit=settings.celery_task_soft_time_limit_seconds,
     task_time_limit=settings.celery_task_time_limit_seconds,
     broker_transport_options={
@@ -244,6 +247,7 @@ class NoRouteFailure(Exception):
     reject_on_worker_lost=True,
 )
 def execute_route_job(task: Any, job_id: str) -> None:
+    started = time.monotonic()
     lease_token = uuid4()
     user_id: int | None = None
     try:
@@ -259,6 +263,9 @@ def execute_route_job(task: Any, job_id: str) -> None:
 
         user_id = int(job[0])
         snapshot = job[5]
+        log_route_event(
+            "route_job_started", job_id=job_id, stage="claimed", attempt=task.request.retries + 1
+        )
         _exercise_test_worker_loss(snapshot, job_id)
         result, chosen_index, route_count = _calculate_result(job)
         with psycopg.connect(_sync_database_url()) as connection:
@@ -280,6 +287,13 @@ def execute_route_job(task: Any, job_id: str) -> None:
             ).rowcount
         if updated:
             release_route_capacity_sync(job_id, user_id)
+            log_route_event(
+                "route_job_completed",
+                job_id=job_id,
+                stage="saved",
+                attempt=task.request.retries + 1,
+                duration_ms=(time.monotonic() - started) * 1000,
+            )
     except Retry:
         raise
     except NoRouteFailure:
@@ -291,6 +305,16 @@ def execute_route_job(task: Any, job_id: str) -> None:
             "No route was found between the submitted points.",
         )
     except OsrmTransientError as error:
+        operations_metrics.record_upstream_failure()
+        log_route_event(
+            "route_job_upstream_failure",
+            job_id=job_id,
+            stage="osrm",
+            attempt=task.request.retries + 1,
+            duration_ms=(time.monotonic() - started) * 1000,
+            error_code=error.code.value,
+            level=30,
+        )
         if task.request.retries >= settings.route_job_max_retries:
             _fail_claimed_job(
                 job_id,
@@ -307,6 +331,16 @@ def execute_route_job(task: Any, job_id: str) -> None:
         )
         raise task.retry(exc=error, countdown=countdown)
     except OsrmClientError as error:
+        operations_metrics.record_upstream_failure()
+        log_route_event(
+            "route_job_upstream_failure",
+            job_id=job_id,
+            stage="osrm",
+            attempt=task.request.retries + 1,
+            duration_ms=(time.monotonic() - started) * 1000,
+            error_code=error.code.value,
+            level=30,
+        )
         _fail_claimed_job(
             job_id,
             lease_token,

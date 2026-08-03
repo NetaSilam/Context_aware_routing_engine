@@ -4,14 +4,18 @@ import asyncio
 import json
 from typing import Any
 
+from celery import Celery
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.abuse_protection import CAPACITY_GLOBAL_KEY
 from app.config import get_settings
 from app.db import get_engine
+from app.operations import operations_metrics
 from app.redis_client import get_redis
 from app.refresh_risk_data import RISK_DATA_SCHEMA_VERSION
+from app.routing.osrm_client import OsrmClient, OsrmClientError, OsrmNoRoute
 
 router = APIRouter(tags=["health"])
 
@@ -19,6 +23,24 @@ router = APIRouter(tags=["health"])
 @router.get("/health/live")
 async def liveness() -> dict[str, str]:
     return {"status": "live"}
+
+
+@router.get("/health/metrics")
+async def metrics() -> JSONResponse:
+    settings = get_settings()
+    try:
+        queue_depth = int(await get_redis().scard(CAPACITY_GLOBAL_KEY))
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "detail": "Queue metrics are temporarily unavailable."},
+        )
+    return JSONResponse(
+        content={"status": "ready", "metrics": operations_metrics.snapshot(
+            queue_depth=queue_depth,
+            queue_capacity=settings.unfinished_route_jobs_global,
+        )}
+    )
 
 
 async def _database_readiness() -> dict[str, Any]:
@@ -91,6 +113,52 @@ async def _redis_readiness() -> dict[str, str]:
     return {"status": "ready"}
 
 
+async def _osrm_service_readiness() -> dict[str, str]:
+    settings = get_settings()
+
+    def request_probe() -> None:
+        with OsrmClient(settings) as client:
+            result = client.request_routes(
+                origin_longitude=34.7818,
+                origin_latitude=32.0853,
+                destination_longitude=34.7870,
+                destination_latitude=32.0800,
+                avoid_highways=False,
+                avoid_tolls=False,
+            )
+        if isinstance(result, OsrmNoRoute):
+            raise RuntimeError("OSRM health route returned no route")
+
+    try:
+        await asyncio.to_thread(request_probe)
+    except OsrmClientError as exc:
+        operations_metrics.record_upstream_failure()
+        raise RuntimeError(f"OSRM probe failed: {exc.code.value}") from exc
+    return {"status": "ready"}
+
+
+async def _queue_worker_readiness() -> dict[str, Any]:
+    settings = get_settings()
+    queue_depth = await get_redis().scard(CAPACITY_GLOBAL_KEY)
+
+    def ping_workers() -> dict[str, Any] | None:
+        app = Celery("road-risk-readiness", broker=str(settings.redis_url))
+        try:
+            return app.control.inspect(timeout=settings.readiness_timeout_seconds).ping()
+        finally:
+            app.close()
+
+    replies = await asyncio.to_thread(ping_workers)
+    if not replies:
+        raise RuntimeError("no route worker responded to the Celery health ping")
+    return {
+        "status": "ready",
+        "queue_depth": int(queue_depth),
+        "queue_capacity": settings.unfinished_route_jobs_global,
+        "workers": len(replies),
+    }
+
+
 async def _osrm_compatibility_readiness(risk_data_version: str | None) -> dict[str, str]:
     settings = get_settings()
     path = settings.osrm_deployment_manifest_path
@@ -123,11 +191,21 @@ async def readiness() -> JSONResponse:
             checks[name] = {"status": "unavailable", "reason": str(exc)}
     try:
         risk_data_version = checks.get("database", {}).get("risk_data_version")
-        checks["osrm"] = await asyncio.wait_for(
+        osrm_service = await asyncio.wait_for(_osrm_service_readiness(), timeout=timeout)
+        compatibility = await asyncio.wait_for(
             _osrm_compatibility_readiness(risk_data_version), timeout=timeout
         )
+        checks["osrm"] = osrm_service
+        checks["data_compatibility"] = compatibility
     except Exception as exc:
         checks["osrm"] = {"status": "unavailable", "reason": str(exc)}
+        checks["data_compatibility"] = {"status": "unavailable", "reason": str(exc)}
+    try:
+        checks["queue_worker"] = await asyncio.wait_for(
+            _queue_worker_readiness(), timeout=timeout + 1
+        )
+    except Exception as exc:
+        checks["queue_worker"] = {"status": "unavailable", "reason": str(exc)}
 
     ready = all(check["status"] == "ready" for check in checks.values())
     return JSONResponse(

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
@@ -17,8 +16,9 @@ from app.routing.route_jobs import history_router as route_history_router
 from app.routing.route_jobs import recover_stale_route_jobs
 from app.routing.route_jobs import reconcile_unfinished_route_job_capacity
 from app.request_bounds import RequestSizeLimitMiddleware
+from app.operations import configure_structured_logging
 
-logging.basicConfig(level=logging.INFO)
+configure_structured_logging()
 
 
 @asynccontextmanager
