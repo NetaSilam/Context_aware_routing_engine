@@ -1,0 +1,177 @@
+# Project codebase map
+
+This is the current implementation map for the Context-Aware Safe Routing Engine. It is
+intended as the first document a team member reads after `README.md`.
+
+## What the application does
+
+The application accepts an origin and destination, creates an authenticated asynchronous route
+job, asks OSRM for candidate driving routes, matches those routes to historical accident-risk
+corridors in PostGIS, ranks the candidates using the user's preferences and time context, and
+stores the result in route history.
+
+The application also exposes two authenticated data explorers: the canonical road network and
+the accident-to-corridor attribution output.
+
+The risk value is historical accident density near matched road corridors. It is not a prediction
+of an individual driver's crash probability.
+
+## Runtime flow
+
+```text
+Browser
+  -> frontend container: Nginx serves the React build and proxies /api
+      -> api container: FastAPI validates requests and owns the public API
+          -> PostgreSQL/PostGIS: users, jobs, route results, foundation data, risk data
+          -> Redis: rate limits, capacity counters, and Celery broker
+          -> worker container: executes route jobs
+              -> OSRM: returns candidate driving routes
+              -> PostGIS: matches route samples to risk corridors
+              -> scoring service: calculates explainable costs and chooses a route
+```
+
+Startup is deliberately split into stages:
+
+1. `postgres` and `redis` become healthy.
+2. `initialize` applies Alembic migrations, loads or verifies foundation data, and refreshes the
+   active risk-data version.
+3. `api` and `worker` start only after initialization succeeds.
+4. `frontend` exposes the only host-facing port, normally `http://localhost:8080`.
+
+## Repository layout
+
+| Path | Responsibility | Start here when... |
+| --- | --- | --- |
+| `README.md` | Quick project overview, startup, and basic test commands | You are new to the repository |
+| `PROJECT_REQUIREMENTS.md` | Original consolidated requirements, decisions, and TODO history | You need the course context or original scope |
+| `compose.yaml` | Development/deployment service topology | You need to understand containers or startup order |
+| `compose.test.yaml` | Test overrides, fake upstreams, and isolated test services | You need to run integration, E2E, or stress tests |
+| `data/` | Prepared foundation artifacts loaded into PostGIS | You need to understand source data or risk inputs |
+| `backend/` | FastAPI API, database lifecycle, worker code, and tests | You are changing server behavior |
+| `frontend/` | React/TypeScript application, Nginx gateway, browser tests | You are changing UI or client API calls |
+| `osrm/` | OSRM graph setup, compatibility manifest, and custom profile | You are changing route candidate generation |
+| `scripts/` | Repository-level validation entry points | You need the complete grading validation |
+| `docs/` | Decisions, measured evidence, test instructions, and planning history | You need design rationale or verification evidence |
+
+## Backend map
+
+### Application entry points and shared infrastructure
+
+- `backend/app/main.py` creates the FastAPI application, registers routers, installs request-size
+  limits, and performs stale-job recovery during lifespan startup.
+- `backend/app/config.py` loads and validates environment configuration. Required secrets and
+  service URLs are intentionally not given usable committed defaults.
+- `backend/app/db.py` provides the async SQLAlchemy database engine/session boundary.
+- `backend/app/redis_client.py` provides Redis access.
+- `backend/app/health.py` implements liveness/readiness endpoints.
+- `backend/app/operations.py` contains structured operational logging and related helpers.
+- `backend/app/request_bounds.py` rejects oversized bodies/queries and unexpected query fields.
+
+### HTTP/API features
+
+- `backend/app/auth.py` contains password hashing, cookie-based JWT authentication, current-user
+  dependencies, and trusted-origin checks.
+- `backend/app/auth_routes.py` implements signup, login, logout, profile, and preference updates.
+- `backend/app/geocoding/` implements the optional address-to-coordinate API and its upstream
+  client. The production configuration points to Nominatim; tests use `backend/tests/fake_geocoder`.
+- `backend/app/data_routes.py` serves the canonical-network and accident-attribution explorer
+  APIs. These queries are adapted to the artifacts actually present under `data/`.
+- `backend/app/routing/route_jobs.py` defines route-job request/response models and endpoints for
+  creation, polling, history, reopen, run-again, and deletion.
+
+### Route execution
+
+- `backend/app/routing/route_job_tasks.py` defines the Celery worker task, retry/recovery behavior,
+  and the worker-side route-job pipeline.
+- `backend/app/routing/osrm_client.py` validates the internal OSRM response and maps user
+  motorway/toll preferences to supported OSRM exclusions.
+- `backend/app/corridor_matcher.py` implements the selected `sampled-nearest-v1` matcher: one
+  sample per 100 metres, 30 metre tolerance, deterministic nearest-corridor selection, and an
+  80% low-coverage warning threshold.
+- `backend/app/routing/route_scoring_service.py` is the pure scoring contract. It combines time,
+  historical accident density, user profile factors, and day/night context, then applies stable
+  tie-breaking.
+- `backend/app/routing/time_context.py` owns the Jerusalem-local day/night calculation.
+- `backend/app/abuse_protection.py` and `backend/app/auth_rate_limit.py` enforce admission,
+  rate-limit, and capacity rules before expensive work.
+
+### Data initialization and maintenance
+
+- `backend/app/initialize_foundation.py` loads the committed fixture or verifies an existing
+  foundation-data version.
+- `backend/app/refresh_risk_data.py` builds and validates an immutable corridor-risk version and
+  activates it transactionally.
+- `backend/app/benchmark_corridor_matchers.py`,
+  `backend/app/generate_corridor_matcher_overlays.py`, and
+  `backend/app/generate_real_route_corpus.py` support matcher measurement and visual evidence;
+  they are not public request handlers.
+- `backend/alembic/versions/` owns application schema migrations. Do not add application tables
+  through FastAPI startup code.
+
+## Frontend map
+
+- `frontend/src/App.tsx` loads the authenticated user and switches between the three pages.
+- `frontend/src/pages/PlanRoutePage.tsx` owns route submission, polling, preferences, and history.
+- `frontend/src/pages/CanonicalNetworkPage.tsx` and
+  `frontend/src/pages/AccidentAttributionPage.tsx` are the two map explorer pages.
+- `frontend/src/components/route-jobs/` contains coordinate acquisition, job state rendering, and
+  route-history controls.
+- `frontend/src/components/auth/` contains the signup/login/profile UI.
+- `frontend/src/components/canonical-network/` and
+  `frontend/src/components/accident-attribution/` contain map filters and detail panels.
+- `frontend/src/api/` contains typed client calls and response tests for auth, geocoding, explorer
+  data, and route jobs.
+- `frontend/src/types/` contains shared TypeScript response/domain types.
+- `frontend/nginx.conf` serves the compiled app and proxies `/api` to FastAPI. Only this gateway
+  publishes a host port in the normal Compose deployment.
+
+## Data and OSRM map
+
+- `data/README.md` documents the prepared GeoParquet/Parquet inputs and what is intentionally
+  excluded, especially traffic-count artifacts.
+- `data/prepared_accidents.geoparquet` is the cleaned accident point input.
+- `data/prepared_osm_roads.geoparquet` and `data/prepared_official_segments.geoparquet` support
+  the road-network foundation.
+- `data/canonical_corridors.geoparquet` is the main road-analysis network.
+- `data/accident_attributions.geoparquet` links accidents to corridors and supplies the basis for
+  risk aggregation.
+- `osrm/rebuild_graph.sh` and `osrm/download_graph.py` prepare the local OSRM graph.
+- `osrm/road-risk-car.lua` is the OSRM profile used during graph preparation.
+- `osrm/deployment-compatibility.json` records the graph/profile compatibility checked by the API.
+- `osrm/README.md` documents the graph artifact workflow and the current external-archive deferral.
+
+## Tests and verification
+
+- Backend unit and integration tests are under `backend/tests/`.
+- `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
+  deterministic without public-network or national-graph dependencies.
+- `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
+  behavior.
+- `frontend/e2e/route-journey.mjs` covers the browser route journey.
+- `backend/tests/stress/locustfile.py` covers concurrent and abusive request behavior.
+- `scripts/run_grading_validation.sh` is the complete isolated validation entry point. The exact
+  suite mapping and known limitations are documented in `docs/GRADING_VALIDATION.md`.
+
+## Where to make common changes
+
+| Change | Main files |
+| --- | --- |
+| Add or change an API endpoint | Router in `backend/app/`, then matching client/types/tests |
+| Change route ranking | `backend/app/routing/route_scoring_service.py` and scoring tests |
+| Change route geometry matching | `backend/app/corridor_matcher.py`, benchmark, fixtures, and matcher tests |
+| Change job retries/recovery | `backend/app/routing/route_job_tasks.py`, `route_jobs.py`, reliability tests |
+| Change user preferences/auth | `backend/app/auth*.py`, migration, frontend auth/profile components, auth tests |
+| Change database schema | Add an Alembic migration under `backend/alembic/versions/` and update initialization/tests |
+| Change route candidate graph | `osrm/`, Compose OSRM service, compatibility manifest, OSRM tests |
+| Change explorer data | `backend/app/data_routes.py`, frontend explorer API/types/pages, fixture/data docs |
+
+## Important boundaries
+
+- Public clients reach the system through Nginx; API and worker ports are internal Compose
+  services.
+- FastAPI accepts and persists jobs; workers perform expensive routing and spatial analysis.
+- OSRM supplies candidate routes. This project ranks those candidates; it does not compute a
+  globally optimal safest route.
+- Historical accident density is a proxy metric. Do not describe it as crash probability or a
+  safety guarantee.
+- The prepared data under `data/` is not raw source data and does not include traffic exposure.

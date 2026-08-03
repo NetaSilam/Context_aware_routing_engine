@@ -31,6 +31,8 @@ build/
 # Local scratch files and logs
 tmp/
 *.log
+playwright-report/
+test-results/
 
 # Editor-specific settings
 .idea/

@@ -6,6 +6,7 @@ import type { SubmitRouteJobRequest } from "../api/routeJobs";
 import CoordinateAcquisition from "../components/route-jobs/CoordinateAcquisition";
 import RouteJobShell from "../components/route-jobs/RouteJobShell";
 import RouteHistoryPanel from "../components/route-jobs/RouteHistoryPanel";
+import { createIdempotencyKey } from "../lib/idempotencyKey";
 import type { DrivingExperience, UserProfile, VehicleType } from "../types/auth";
 import type { RouteJob } from "../types/routeJobs";
 
@@ -78,7 +79,7 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
     setRouteStatus("submitting");
     setRouteError(null);
     try {
-      const submissionKey = window.crypto.randomUUID();
+      const submissionKey = createIdempotencyKey();
       const accepted = await submitRouteJob(payload, submissionKey);
       activateJob(accepted.id);
     } catch (err) {
@@ -115,7 +116,7 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
     if (routeStatus === "submitting" || routeStatus === "polling") return;
     setRouteStatus("submitting");
     try {
-      const accepted = await runRouteHistoryAgain(historyJobId, window.crypto.randomUUID());
+      const accepted = await runRouteHistoryAgain(historyJobId, createIdempotencyKey());
       activateJob(accepted.id);
     } catch (err) {
       setRouteStatus("failed");

@@ -7,6 +7,10 @@ profile and preferences. Built for Software Engineering for ML (Spring 2026).
 See [`PROJECT_REQUIREMENTS.md`](PROJECT_REQUIREMENTS.md) for the full spec,
 architecture, and TODO list.
 
+For team onboarding, start with the [project codebase map](docs/CODEBASE_MAP.md) and the
+[documentation guide](docs/DOCUMENTATION_GUIDE.md). The guide identifies which documents are
+current evidence and which are historical planning material.
+
 ## Development foundation
 
 The route page is currently an asynchronous-job UI shell. The supporting
@@ -61,14 +65,10 @@ remain in the repository during the routing rebuild.
 ## Running the tests
 
 ```
-cd backend
-pip install -r requirements.txt
-pytest -m "not integration"
+.venv/bin/pip install -r backend/requirements.txt
+.venv/bin/python -m pytest -q -m "not integration" backend/tests
 
-cd ../frontend
-npm install
-npm test
-npm run build   # tsc typecheck + production build
+docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml run --rm frontend-tests
 ```
 
 The clean-container foundation test uses only the committed SQL fixture:
@@ -80,3 +80,7 @@ docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml \
   up --build --abort-on-container-exit --exit-code-from risk-data-tests risk-data-tests
 docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml down -v
 ```
+
+The complete clean-machine grading validation, category commands, feature-to-test matrix,
+performance evidence, and current verified deferrals are in
+[`docs/GRADING_VALIDATION.md`](docs/GRADING_VALIDATION.md).
