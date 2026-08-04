@@ -11,6 +11,9 @@ For team onboarding, start with the [project codebase map](docs/CODEBASE_MAP.md)
 [documentation guide](docs/DOCUMENTATION_GUIDE.md). The guide identifies which documents are
 current evidence and which are historical planning material.
 
+For day-to-day local startup, shutdown, reset, and test commands, see
+[`docs/LOCAL_SETUP_AND_OPERATIONS.md`](docs/LOCAL_SETUP_AND_OPERATIONS.md).
+
 ## Development foundation
 
 The route page is currently an asynchronous-job UI shell. The supporting
