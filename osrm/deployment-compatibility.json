@@ -2,7 +2,7 @@
   "tested_combinations": [
     {
       "graph_version": "israel-palestine-2026-07-31-osrm-6.0.0-profile-v1",
-      "corridor_risk_version": "replace_with_activated_risk_data_version",
+      "corridor_risk_version": "national-risk-2026-08-01",
       "matcher_version": "sampled-nearest-v1"
     }
   ]

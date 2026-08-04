@@ -42,6 +42,20 @@ version and checksum, and ensure the required foundation tables are already
 present. Initialization refuses stale checksums, changed row counts, partial
 tables, or missing tables.
 
+For the prepared real-data artifacts committed under `data/`, copy
+`.env.real.example` to `.env.real` and replace the local secret placeholders:
+
+```sh
+docker compose --env-file .env.real up --build
+```
+
+The one-shot initializer loads the four canonical/attribution Parquet files,
+verifies their manifest checksum and database row counts, then builds and
+activates `national-risk-2026-08-01`. The data directory is mounted read-only
+only into the initializer; API and worker containers use the PostGIS tables.
+The template also uses a separate Compose project name, so its Postgres and
+Redis volumes are isolated from the test stack.
+
 Only the Nginx frontend gateway publishes a host port. PostgreSQL, Redis, OSRM,
 initialization, workers, and FastAPI communicate only on the Compose network.
 Redis uses append-only storage;
@@ -56,8 +70,8 @@ container name:
 docker compose up --build --scale worker=2
 ```
 
-The prepared data exports are documented in `data/README.md`. They are no
-longer loaded by FastAPI startup code.
+The prepared data exports are documented in `data/README.md`. They are loaded
+by the one-shot initializer in real mode, not by FastAPI startup code.
 
 The canonical-network and accident-attribution explorer pages and read APIs
 remain in the repository during the routing rebuild.

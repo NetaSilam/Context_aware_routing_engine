@@ -10,6 +10,8 @@ import psycopg
 from psycopg import sql
 from sqlalchemy.engine import make_url
 
+from app.load_real_foundation import load_real_foundation, source_manifest_checksum
+
 REQUIRED_TABLES = (
     ("canonical_network", "canonical_corridors"),
     ("canonical_network", "official_segment_links"),
@@ -99,8 +101,8 @@ def initialize() -> None:
     mode = os.environ.get("FOUNDATION_DATA_MODE", "verify").strip()
     if not version:
         raise ValueError("FOUNDATION_DATA_VERSION must not be empty")
-    if mode not in {"fixture", "verify"}:
-        raise ValueError("FOUNDATION_DATA_MODE must be fixture or verify")
+    if mode not in {"fixture", "real", "verify"}:
+        raise ValueError("FOUNDATION_DATA_MODE must be fixture, real, or verify")
 
     fixture_path: Path | None = None
     if mode == "fixture":
@@ -112,6 +114,21 @@ def initialize() -> None:
         if not fixture_path.is_file():
             raise FileNotFoundError(f"foundation fixture does not exist: {fixture_path}")
         checksum = file_checksum(fixture_path)
+    elif mode == "real":
+        data_path = Path(os.environ.get("FOUNDATION_DATA_PATH", "/data"))
+        checksum = source_manifest_checksum(data_path)
+        expected_checksum = os.environ.get("FOUNDATION_DATA_CHECKSUM", "").strip()
+        if expected_checksum:
+            if not re.fullmatch(r"[0-9a-f]{64}", expected_checksum):
+                raise ValueError(
+                    "FOUNDATION_DATA_CHECKSUM must be a lowercase SHA-256 checksum"
+                )
+            if expected_checksum != checksum:
+                raise RuntimeError(
+                    "real foundation source checksum does not match "
+                    f"FOUNDATION_DATA_CHECKSUM: expected={expected_checksum}, actual={checksum}"
+                )
+        load_real_foundation(database_url, data_path)
     else:
         checksum = os.environ.get("FOUNDATION_DATA_CHECKSUM", "").strip()
         if not re.fullmatch(r"[0-9a-f]{64}", checksum):

@@ -71,6 +71,10 @@ docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml run --r
 2. Copy `.env.example` to `.env`; replace all placeholders. `FOUNDATION_DATA_MODE=fixture` uses
    only `backend/tests/fixtures/foundation_fixture.sql`. For national data use `verify` and run
    the one-shot initializer/refresh service before API/workers.
+   For the prepared artifacts included in this repository, use
+   `cp .env.real.example .env.real` and start with
+   `docker compose --env-file .env.real up --build`; real mode loads and verifies the four
+   canonical/attribution files before refreshing the national risk version.
 3. For deployment graph setup, run the download/checksum command in [osrm/README.md](../osrm/README.md).
    It intentionally fails until the external archive URL and SHA-256 are supplied. The documented
    rebuild command uses the pinned OSRM image/profile.
