@@ -83,6 +83,13 @@ class Settings(BaseSettings):
     geocoder_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     geocoder_user_rate_limit: int = Field(default=10, ge=1, le=100)
     geocoder_ip_rate_limit: int = Field(default=30, ge=1, le=300)
+    forum_protection_window_seconds: int = Field(default=60, ge=1, le=3600)
+    forum_post_user_rate_limit: int = Field(default=5, ge=1, le=1000)
+    forum_post_ip_rate_limit: int = Field(default=15, ge=1, le=5000)
+    forum_comment_user_rate_limit: int = Field(default=20, ge=1, le=1000)
+    forum_comment_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
+    forum_vote_user_rate_limit: int = Field(default=60, ge=1, le=2000)
+    forum_vote_ip_rate_limit: int = Field(default=180, ge=1, le=10_000)
 
     @field_validator("database_url")
     @classmethod
@@ -134,6 +141,12 @@ class Settings(BaseSettings):
             raise ValueError("history mutation per-user limit cannot exceed the per-IP limit")
         if self.unfinished_route_jobs_per_user > self.unfinished_route_jobs_global:
             raise ValueError("per-user unfinished job capacity cannot exceed global capacity")
+        if self.forum_post_user_rate_limit > self.forum_post_ip_rate_limit:
+            raise ValueError("forum post per-user limit cannot exceed the per-IP limit")
+        if self.forum_comment_user_rate_limit > self.forum_comment_ip_rate_limit:
+            raise ValueError("forum comment per-user limit cannot exceed the per-IP limit")
+        if self.forum_vote_user_rate_limit > self.forum_vote_ip_rate_limit:
+            raise ValueError("forum vote per-user limit cannot exceed the per-IP limit")
         return self
 
 

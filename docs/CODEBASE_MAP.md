@@ -11,10 +11,15 @@ corridors in PostGIS, ranks the candidates using the user's preferences and time
 stores the result in route history.
 
 The application also exposes two authenticated data explorers: the canonical road network and
-the accident-to-corridor attribution output.
+the accident-to-corridor attribution output, and a community hazard-reporting forum where
+authenticated users can post, comment on, and vote on real road hazards (potholes, flooding,
+broken signals, and similar), optionally anonymously. See `docs/FORUM_FEATURE_PRD.md` for the
+forum's full design and `docs/forum-feature-tickets.md` for what is implemented versus planned.
 
 The risk value is historical accident density near matched road corridors. It is not a prediction
-of an individual driver's crash probability.
+of an individual driver's crash probability. Forum hazard reports are a separate, unmoderated
+social feature and deliberately do not feed into that risk value (see the forum PRD's Problem
+Statement for why).
 
 ## Runtime flow
 
@@ -78,6 +83,13 @@ Startup is deliberately split into stages:
   APIs. These queries are adapted to the artifacts actually present under `data/`.
 - `backend/app/routing/route_jobs.py` defines route-job request/response models and endpoints for
   creation, polling, history, reopen, run-again, and deletion.
+- `backend/app/forum/routes.py` implements the hazard-reporting forum: post/comment CRUD,
+  anonymity-filtered serialization, and up/down/none voting with atomically maintained counters.
+  Requests are ordinary synchronous FastAPI/PostgreSQL work (no Celery task), since posting,
+  commenting, and voting are bounded writes unlike OSRM/PostGIS route scoring. Direct messages,
+  media attachments, live notifications, and cold seeding are designed in
+  `docs/FORUM_FEATURE_PRD.md` but not yet implemented; see `docs/forum-feature-tickets.md` for
+  status.
 
 ### Route execution
 
@@ -110,17 +122,24 @@ Startup is deliberately split into stages:
 
 ## Frontend map
 
-- `frontend/src/App.tsx` loads the authenticated user and switches between the three pages.
+- `frontend/src/App.tsx` loads the authenticated user and switches between the four pages.
 - `frontend/src/pages/PlanRoutePage.tsx` owns route submission, polling, preferences, and history.
+- `frontend/src/pages/ForumPage.tsx` owns the hazard-reporting feed: filtering, pagination, post
+  creation, and opening a post into `components/forum/PostDetailPanel.tsx` for comments and
+  voting.
 - `frontend/src/pages/CanonicalNetworkPage.tsx` and
   `frontend/src/pages/AccidentAttributionPage.tsx` are the two map explorer pages.
 - `frontend/src/components/route-jobs/` contains coordinate acquisition, job state rendering, and
   route-history controls.
+- `frontend/src/components/forum/` contains the post form, feed list, post detail/comment panel,
+  and shared vote-button component.
 - `frontend/src/components/auth/` contains the signup/login/profile UI.
 - `frontend/src/components/canonical-network/` and
   `frontend/src/components/accident-attribution/` contain map filters and detail panels.
 - `frontend/src/api/` contains typed client calls and response tests for auth, geocoding, explorer
-  data, and route jobs.
+  data, route jobs, and the forum.
+- `frontend/src/lib/applyVote.ts` is the pure client-side vote-delta helper shared by the feed and
+  post detail views, so an optimistic vote click never needs a full refetch.
 - `frontend/src/types/` contains shared TypeScript response/domain types.
 - `frontend/nginx.conf` serves the compiled app and proxies `/api` to FastAPI. Only this gateway
   publishes a host port in the normal Compose deployment.
@@ -142,15 +161,21 @@ Startup is deliberately split into stages:
 
 ## Tests and verification
 
-- Backend unit and integration tests are under `backend/tests/`.
+- Backend unit and integration tests are under `backend/tests/`, including
+  `test_forum_routes.py` (pure vote/serialization/validation logic, no database) and
+  `test_forum_stack.py` (real PostgreSQL/Redis integration: CRUD, ownership, anonymity leak
+  checks, vote counters, and the dashboard aggregate).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
-  behavior.
+  behavior, including `frontend/src/pages/ForumPage.test.tsx` and
+  `frontend/src/lib/applyVote.test.ts`.
 - `frontend/e2e/route-journey.mjs` covers the browser route journey.
 - `backend/tests/stress/locustfile.py` covers concurrent and abusive request behavior.
-- `scripts/run_grading_validation.sh` is the complete isolated validation entry point. The exact
-  suite mapping and known limitations are documented in `docs/GRADING_VALIDATION.md`.
+- `scripts/run_grading_validation.sh` is the complete isolated validation entry point, running one
+  Compose test service per feature area (see `compose.test.yaml`, e.g. `forum-tests`) in sequence.
+  A dedicated `GRADING_VALIDATION.md` evidence report does not currently exist in `docs/` — see
+  `docs/DOCUMENTATION_GUIDE.md`'s "Known documentation drift" section before assuming otherwise.
 
 ## Where to make common changes
 
@@ -164,6 +189,7 @@ Startup is deliberately split into stages:
 | Change database schema | Add an Alembic migration under `backend/alembic/versions/` and update initialization/tests |
 | Change route candidate graph | `osrm/`, Compose OSRM service, compatibility manifest, OSRM tests |
 | Change explorer data | `backend/app/data_routes.py`, frontend explorer API/types/pages, fixture/data docs |
+| Change the forum (posts/comments/votes/DMs/notifications) | `backend/app/forum/routes.py`, an Alembic migration, `frontend/src/pages/ForumPage.tsx` and `components/forum/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` for design intent and remaining scope |
 
 ## Important boundaries
 
@@ -175,3 +201,6 @@ Startup is deliberately split into stages:
 - Historical accident density is a proxy metric. Do not describe it as crash probability or a
   safety guarantee.
 - The prepared data under `data/` is not raw source data and does not include traffic exposure.
+- Forum posts/comments always store the real `author_user_id`; `is_anonymous` controls only
+  API-response visibility, never ownership or rate-limit identity. Do not add a code path that
+  reveals a true author to another user when `is_anonymous` is true.

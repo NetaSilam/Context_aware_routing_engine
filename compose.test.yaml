@@ -293,6 +293,21 @@ services:
       auth-unavailable-api:
         condition: service_healthy
 
+  forum-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_forum_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      FORUM_TEST_API_URL: http://api:8000
+      RUN_FORUM_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+
   fake-osrm:
     build: ./backend
     command: ["uvicorn", "tests.fake_osrm.app:app", "--host", "0.0.0.0", "--port", "5000"]
