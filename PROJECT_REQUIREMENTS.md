@@ -76,12 +76,13 @@ service — the web container, Redis, and worker containers all still need to be
 **Status: implemented.** `data/` now holds the foundation pipeline's actual parquet/geoparquet
 exports (added directly to this repo, with its own `data/README.md`), not a `pg_dump` as
 originally planned here — simpler, since it doesn't require a live Postgres instance to
-export from, just the artifact files. `backend/app/seed.py` loads them into PostGIS on
-first `web` container startup (checks row counts, skips if already seeded), writing into
-the **same schema/table names the foundation repo's backend queries use** —
+export from, just the artifact files. In real mode, the one-shot initializer uses
+`backend/app/load_real_foundation.py` to load them into PostGIS before verification and
+risk refresh, writing into the **same schema/table names the foundation repo's backend
+queries use** —
 `canonical_network.canonical_corridors`, `canonical_network.official_segment_links`,
-`accident_attribution.accident_attributions`, `accident_attribution.accident_attribution_summary`,
-plus the upstream `foundation_data.*` tables — verified directly against
+`accident_attribution.accident_attributions`, and
+`accident_attribution.accident_attribution_summary` — verified directly against
 `backend/app/repositories/{canonical_network,accident_attribution}.py` in the foundation
 repo so those files can be ported without renaming anything.
 
@@ -461,7 +462,7 @@ without manual refresh — WebSocket or SSE from the web gateway.
 - [x] Accident dataset acquired, cleaned, and geocoded (`foundation_data` + `accident_attribution`, in the foundation repo) — this resolves §6.1's blocking concern. **Correction:** actual seeded row count is **49,941** accidents, not ~30,000 as stated in the proposal — update the report to cite the real number.
 - [x] Create the new project repository (private): [NetaSilam/Context_aware_routing_engine](https://github.com/NetaSilam/Context_aware_routing_engine).
 - [x] Local scaffold pushed: `compose.yaml` (postgis + web), `db/init/01-load-seed.sh` (auto-restores a seed dump via `docker-entrypoint-initdb.d` if present, no-ops otherwise), `db/seed/README.md`, minimal FastAPI backend (`/health`, `/health/db`), `.env.example`, `.gitignore`, root `README.md`.
-- [x] §0.1 step 1: `data/` parquet/geoparquet exports added; `backend/app/seed.py` loads them into PostGIS on first `web` startup. **Verified end-to-end** with `docker compose up --build`: `/health` and `/health/db` both return 200, all 8 tables seeded with real row counts (49,941 accidents, 362,922 corridors, 317,440 OSM roads, etc.), and re-running skips already-seeded tables (checked via a second `docker compose up`). One bug found and fixed in the process: `accident_attribution_summary`'s breakdown columns hold nested dict values that neither pandas nor psycopg can bind directly — `seed.py` now JSON-encodes those to text before insert.
+- [x] §0.1 step 1: `data/` parquet/geoparquet exports added; real mode loads the four canonical-network and accident-attribution artifacts into PostGIS through the one-shot initializer, verifies the manifest checksum and row counts, and refreshes the immutable risk version. The committed national refresh evidence records 49,941 accidents, 362,922 corridors, 49,646 attributed accidents, and 2020–2024. The loader is idempotent and JSON-encodes nested summary fields before insert.
 - [x] Closed the `canonical_corridor_display`/`canonical_roads` gap from §0.1 by adapting rather than waiting for the missing tables: `backend/app/data_routes.py` now serves `/api/canonical-network/corridors` (bbox list), `/corridors/{id}` (detail + official segment links), `/api/accident-attribution/accidents` (bbox list), and `/accidents-attribution/summary` — all querying real seeded data, verified live (real Tel-Aviv-area corridors/accidents returned, Hebrew street names intact). Not ported: `canonical_network`'s `/summary` (needs the missing audit tables) and all of `traffic_coverage` (no data for it in this export).
 - [ ] Port the remaining pieces from the foundation repo as proper `repositories/`/`services/`/`schemas/` layers (currently one flat `data_routes.py` with inline SQL) if/when `traffic_coverage` data or the audit tables become available - not urgent, current structure is fine for the MVP.
 - [x] Frontend ported (`frontend/`, React/Leaflet, Canonical Network + Accident Attribution pages, Traffic Coverage dropped). Dockerized as its own service, wired to the backend via `API_PROXY_TARGET`; `web` no longer publishes a port to the host, only `frontend` does (http://localhost:5173) - closes the "only the web container is exposed to clients" gap in one move. Verified: frontend's own test suite (9 tests) + `tsc`/production build + live end-to-end render against seeded data, all pass.

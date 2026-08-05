@@ -183,6 +183,25 @@ input {
   margin-top: 16px;
 }
 
+.route-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.route-candidate-grid dl,
+.route-version-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+}
+
+.route-candidate-grid dt,
+.route-version-details dt { color: #56676f; }
+.route-candidate-grid dd,
+.route-version-details dd { margin: 0; text-align: right; }
+
 .traffic-coverage-toggle-panel {
   display: flex;
   justify-content: space-between;
@@ -256,6 +275,38 @@ input {
   margin-top: 18px;
   overflow: hidden;
   border-radius: 20px;
+}
+
+.coordinate-search-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: 18px;
+}
+
+.address-results {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.address-results button {
+  width: 100%;
+  text-align: left;
+}
+
+.geocoding-attribution {
+  color: #5c6c73;
+  font-size: 0.9rem;
+}
+
+.map-target-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 18px;
 }
 
 .corridor-map {
@@ -488,6 +539,10 @@ input {
   .filters-grid,
   .workspace-grid,
   .traffic-coverage-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .coordinate-search-grid {
     grid-template-columns: 1fr;
   }
 

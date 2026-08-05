@@ -7,52 +7,97 @@ profile and preferences. Built for Software Engineering for ML (Spring 2026).
 See [`PROJECT_REQUIREMENTS.md`](PROJECT_REQUIREMENTS.md) for the full spec,
 architecture, and TODO list.
 
-## Status
+For team onboarding, start with the [project codebase map](docs/CODEBASE_MAP.md) and the
+[documentation guide](docs/DOCUMENTATION_GUIDE.md). The guide identifies which documents are
+current evidence and which are historical planning material.
 
-Early scaffold. The accident/road-corridor data pipeline was built in a
-separate foundation project (see `data/README.md` for what each file is);
-its parquet/geoparquet exports go in `data/` and are loaded into PostGIS
-automatically on first startup by `backend/app/seed.py`. **The data files
-themselves aren't committed yet** (see `data/README.md` and the team for how
-to get them) - `.gitignore` excludes `data/*.parquet`/`*.geoparquet` for now;
-without them the app still boots, it just has no rows in `foundation_data`,
-`canonical_network`, or `accident_attribution`.
+For day-to-day local startup, shutdown, reset, and test commands, see
+[`docs/LOCAL_SETUP_AND_OPERATIONS.md`](docs/LOCAL_SETUP_AND_OPERATIONS.md).
 
-## Running the app
+## Development foundation
 
-```
-cp .env.example .env
-# Place the foundation pipeline's exports in data/ (see data/README.md) first.
+The route page is currently an asynchronous-job UI shell. The supporting
+foundation is now reproducible: Alembic owns the application schema, a one-shot
+initializer verifies foundation-data identity, and Compose starts PostGIS,
+Redis, FastAPI, workers, and the compiled React application behind Nginx in
+dependency order.
+
+The initializer also builds an immutable `RISK_DATA_VERSION` from the prepared
+corridors and accident attributions. It reports source and output counts,
+confidence-tier counts, the full included year range, refresh duration, storage
+use, and the length-weighted risk p95. A validated version is activated
+transactionally; a failed refresh leaves the prior version active. Run a new
+national-data refresh as an initialization/maintenance operation, never from a
+public route request.
+
+The verified full-data row counts, p95, duration, and storage measurement are
+recorded in [`docs/RISK_DATA_REFRESH_REPORT.md`](docs/RISK_DATA_REFRESH_REPORT.md).
+
+Copy `.env.example` to `.env`, replace every placeholder, then run:
+
+```sh
 docker compose up --build
 ```
 
-- **App: http://localhost:5173** - a React/Leaflet map viewer with two pages
-  (Canonical Network, Accident Attribution), ported from the foundation
-  project. This is the only container exposed to the host; the API is
-  reachable only from the frontend container over the compose network.
-- The backend API (`/health`, `/health/db`, `/api/canonical-network/*`,
-  `/api/accident-attribution/*`) is not published to the host on purpose -
-  only `frontend` talks to it directly, matching the course's "only the web
-  container is exposed to clients" requirement. To hit it directly for
-  debugging, temporarily add a `ports:` mapping to the `web` service.
-- On first startup, the `web` container loads `data/*.parquet`/`*.geoparquet`
-  into PostGIS (schemas `foundation_data`, `canonical_network`,
-  `accident_attribution`) if those tables are empty. Subsequent restarts skip
-  seeding since the tables are already populated. Verified locally: all 8
-  tables load with real row counts (49,941 accidents, 362,922 corridors, etc.),
-  and the frontend renders real data through the proxy end-to-end.
-- Dropped from the port: the foundation project's Traffic Coverage page/API -
-  no traffic-count data is in this export (see `data/README.md`).
+`FOUNDATION_DATA_MODE=fixture` loads the small committed explorer fixture. For
+an existing national dataset, use `FOUNDATION_DATA_MODE=verify`, provide its
+version and checksum, and ensure the required foundation tables are already
+present. Initialization refuses stale checksums, changed row counts, partial
+tables, or missing tables.
+
+For the prepared real-data artifacts committed under `data/`, copy
+`.env.real.example` to `.env.real` and replace the local secret placeholders:
+
+```sh
+docker compose --env-file .env.real up --build
+```
+
+The one-shot initializer loads the four canonical/attribution Parquet files,
+verifies their manifest checksum and database row counts, then builds and
+activates `national-risk-2026-08-01`. The data directory is mounted read-only
+only into the initializer; API and worker containers use the PostGIS tables.
+The template also uses a separate Compose project name, so its Postgres and
+Redis volumes are isolated from the test stack.
+
+Only the Nginx frontend gateway publishes a host port. PostgreSQL, Redis, OSRM,
+initialization, workers, and FastAPI communicate only on the Compose network.
+Redis uses append-only storage;
+PostgreSQL and Redis both use persistent named volumes.
+
+For local frontend development, run `npm run dev` in `frontend/`; Vite remains a
+development-only server. The deployed Compose gateway serves the production build
+on `FRONTEND_PORT` (default `8080`). Scale route workers without assigning a
+container name:
+
+```sh
+docker compose up --build --scale worker=2
+```
+
+The prepared data exports are documented in `data/README.md`. They are loaded
+by the one-shot initializer in real mode, not by FastAPI startup code.
+
+The canonical-network and accident-attribution explorer pages and read APIs
+remain in the repository during the routing rebuild.
 
 ## Running the tests
 
 ```
-cd backend
-pip install -r requirements.txt
-pytest
+.venv/bin/pip install -r backend/requirements.txt
+.venv/bin/python -m pytest -q -m "not integration" backend/tests
 
-cd ../frontend
-npm install
-npm test        # vitest - 4 suites, 9 tests, all passing as of this port
-npm run build   # tsc typecheck + production build
+docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml run --rm frontend-tests
 ```
+
+The clean-container foundation test uses only the committed SQL fixture:
+
+```sh
+docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml \
+  up --build --abort-on-container-exit --exit-code-from foundation-tests foundation-tests
+docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml \
+  up --build --abort-on-container-exit --exit-code-from risk-data-tests risk-data-tests
+docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml down -v
+```
+
+The complete clean-machine grading validation, category commands, feature-to-test matrix,
+performance evidence, and current verified deferrals are in
+[`docs/GRADING_VALIDATION.md`](docs/GRADING_VALIDATION.md).

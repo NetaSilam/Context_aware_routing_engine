@@ -1,18 +1,9 @@
-import type { LoginInput, SignupInput, UserProfile } from "../types/auth";
-
-const TOKEN_STORAGE_KEY = "routing_engine_token";
-
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_STORAGE_KEY);
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_STORAGE_KEY, token);
-}
-
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_STORAGE_KEY);
-}
+import type {
+  LoginInput,
+  PreferenceUpdate,
+  SignupInput,
+  UserProfile,
+} from "../types/auth";
 
 async function parseJsonOrThrow(response: Response): Promise<unknown> {
   const body = await response.json().catch(() => null);
@@ -23,29 +14,45 @@ async function parseJsonOrThrow(response: Response): Promise<unknown> {
   return body;
 }
 
-export async function signup(input: SignupInput): Promise<string> {
-  const response = await fetch("/api/auth/signup", {
+async function sessionRequest(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(path, { ...init, credentials: "include" });
+}
+
+export async function signup(input: SignupInput): Promise<UserProfile> {
+  const response = await sessionRequest("/api/auth/signup", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
-  });
-  const body = (await parseJsonOrThrow(response)) as { access_token: string };
-  return body.access_token;
-}
-
-export async function login(input: LoginInput): Promise<string> {
-  const response = await fetch("/api/auth/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const body = (await parseJsonOrThrow(response)) as { access_token: string };
-  return body.access_token;
-}
-
-export async function getMe(token: string): Promise<UserProfile> {
-  const response = await fetch("/api/auth/me", {
-    headers: { Authorization: `Bearer ${token}` },
   });
   return (await parseJsonOrThrow(response)) as UserProfile;
+}
+
+export async function login(input: LoginInput): Promise<UserProfile> {
+  const response = await sessionRequest("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return (await parseJsonOrThrow(response)) as UserProfile;
+}
+
+export async function getMe(): Promise<UserProfile> {
+  const response = await sessionRequest("/api/auth/me");
+  return (await parseJsonOrThrow(response)) as UserProfile;
+}
+
+export async function updatePreferences(input: PreferenceUpdate): Promise<UserProfile> {
+  const response = await sessionRequest("/api/auth/me", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return (await parseJsonOrThrow(response)) as UserProfile;
+}
+
+export async function logout(): Promise<void> {
+  const response = await sessionRequest("/api/auth/logout", { method: "POST" });
+  if (!response.ok) {
+    await parseJsonOrThrow(response);
+  }
 }

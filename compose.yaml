@@ -1,65 +1,142 @@
 services:
-  postgis:
+  postgres:
     image: postgis/postgis:16-3.4
-    container_name: routing-engine-postgis
-    restart: unless-stopped
+    command: ["postgres", "-c", "jit=off"]
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-routing_engine}
-      POSTGRES_USER: ${POSTGRES_USER:-routing_engine}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-routing_engine_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     healthcheck:
+      # The PostGIS entrypoint briefly starts a Unix-socket-only server while it
+      # initializes the volume. Probe TCP so dependents wait for the final server.
       test:
-        - CMD-SHELL
-        - pg_isready -U ${POSTGRES_USER:-routing_engine} -d ${POSTGRES_DB:-routing_engine}
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
+        ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
     volumes:
-      - postgis_data:/var/lib/postgresql/data
-    # Not exposed to the host on purpose: only the web container talks to the DB directly.
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - redis_data:/data
 
   osrm:
-    image: osrm/osrm-backend
-    container_name: routing-engine-osrm
-    restart: unless-stopped
-    command: >
-      osrm-routed --algorithm mld
-      /data/${OSRM_GRAPH_NAME:-israel-and-palestine-latest}.osrm
+    image: ghcr.io/project-osrm/osrm-backend:v6.0.0@sha256:729461bcc9ae9e6aafa92c0f93db9b060a32e85d5e72092c01ae4a4a9f1eb564
+    command: ["osrm-routed", "--algorithm", "mld", "/data/israel-and-palestine-260731.osrm"]
     volumes:
-      # Prepared graph, not committed - see osrm/README.md to (re)generate it.
       - ./osrm/data:/data:ro
-    # Not exposed to the host: only the web container calls this directly.
+    expose:
+      - "5000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null 'http://127.0.0.1:5000/nearest/v1/driving/34.78,32.08' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
-  web:
+  initialize:
     build: ./backend
-    container_name: routing-engine-web
-    restart: unless-stopped
-    depends_on:
-      postgis:
-        condition: service_healthy
+    command:
+      - /bin/sh
+      - -ec
+      - alembic upgrade head && python -m app.initialize_foundation && python -m app.refresh_risk_data
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-routing_engine}:${POSTGRES_PASSWORD:-routing_engine_dev_password}@postgis:5432/${POSTGRES_DB:-routing_engine}
-      ENABLE_TEST_ENDPOINTS: ${ENABLE_TEST_ENDPOINTS:-false}
-      OSRM_BASE_URL: http://osrm:5000
-      JWT_SECRET: ${JWT_SECRET:-dev_only_change_me}
-    # No `ports:` on purpose - only the frontend container talks to this API
-    # directly (see compose network); clients only ever reach the frontend.
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+      FOUNDATION_DATA_VERSION: ${FOUNDATION_DATA_VERSION:?Set FOUNDATION_DATA_VERSION in .env}
+      FOUNDATION_DATA_MODE: ${FOUNDATION_DATA_MODE:-fixture}
+      FOUNDATION_DATA_CHECKSUM: ${FOUNDATION_DATA_CHECKSUM:-}
+      FOUNDATION_DATA_PATH: ${FOUNDATION_DATA_PATH:-/data}
+      FOUNDATION_FIXTURE_PATH: /app/tests/fixtures/foundation_fixture.sql
+      RISK_DATA_VERSION: ${RISK_DATA_VERSION:?Set RISK_DATA_VERSION in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
+      OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
+      EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+      GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
+      GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
-      # Read-only: the foundation pipeline's parquet/geoparquet exports, loaded into
-      # PostGIS on first startup by app/seed.py (see data/README.md for what's in here).
       - ./data:/data:ro
+    restart: "no"
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+      FOUNDATION_DATA_VERSION: ${FOUNDATION_DATA_VERSION:?Set FOUNDATION_DATA_VERSION in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
+      EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+      OSRM_DEPLOYMENT_MANIFEST_PATH: /osrm/deployment-compatibility.json
+      OSRM_COMPATIBILITY_REQUIRED: "true"
+      GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
+      GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./osrm/deployment-compatibility.json:/osrm/deployment-compatibility.json:ro
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  worker:
+    build: ./backend
+    command: ["celery", "-A", "app.routing.route_job_tasks.celery_app", "worker", "--loglevel=INFO"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+      FOUNDATION_DATA_VERSION: ${FOUNDATION_DATA_VERSION:?Set FOUNDATION_DATA_VERSION in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
+      OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
+      EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+      OSRM_DEPLOYMENT_MANIFEST_PATH: /osrm/deployment-compatibility.json
+      OSRM_COMPATIBILITY_REQUIRED: "true"
+      GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
+      GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./osrm/deployment-compatibility.json:/osrm/deployment-compatibility.json:ro
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
-    container_name: routing-engine-frontend
-    restart: unless-stopped
     depends_on:
-      - web
-    environment:
-      API_PROXY_TARGET: http://web:8000
+      api:
+        condition: service_healthy
     ports:
-      - "${FRONTEND_PORT:-5173}:5173"
+      - "${FRONTEND_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
 
 volumes:
-  postgis_data:
+  postgres_data:
+  redis_data:
