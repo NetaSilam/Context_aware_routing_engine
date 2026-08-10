@@ -229,15 +229,40 @@ classification/dedup flag can arrive after the post already rendered.
 **Blocked by:** 4. Deliver hazard report triage on post creation; 5. Deliver near-duplicate
 detection and flagging.
 
-**Status:** ready-for-agent
+**Status:** done (2026-08-11) — `PostList`/`PostDetailPanel` render an inline "High/Medium/Low
+severity" pill (`SEVERITY_LABELS`, from `types/forum.ts`) whenever `llm_severity` is set, and a
+"Possible duplicate of report ..." line whenever `duplicate_of_post_id` is set. Neither renders
+when the field is still `null` (job not yet completed, or classification legitimately absent),
+matching how the rest of the forum UI already renders conditionally on nullable fields (e.g.
+`is_own`).
 
-- [ ] `PostList`/`PostDetailPanel` show the suggested severity (when present) and a "possible
+- [x] `PostList`/`PostDetailPanel` show the suggested severity (when present) and a "possible
       duplicate of ..." indicator (when `duplicate_of_post_id` is set), following the existing
       component/typed-client conventions in `frontend/src/components/forum/`.
-- [ ] `types/forum.ts`/`api/forum.ts` gain the new nullable fields.
-- [ ] Frontend tests cover both the present and absent (still-processing or never-classified)
-      states, consistent with how other async/eventually-consistent UI state is tested elsewhere
-      in this codebase (e.g. the notification indicator's mocked `EventSource`).
+- [x] `types/forum.ts`/`api/forum.ts` gain the new nullable fields. `PostSummary` gained
+      `llm_hazard_type_suggested: HazardType | null`, `llm_severity: Severity | null`,
+      `duplicate_of_post_id: string | null` (new `Severity` type + `SEVERITY_LABELS` map added
+      alongside the existing `HazardType`/`HAZARD_TYPE_LABELS` pair). `api/forum.ts` needed no
+      changes — it already forwards `PostSummary`/`PostDetail` verbatim from the backend response.
+- [x] Frontend tests cover both the present and absent (still-processing or never-classified)
+      states: `ForumPage.test.tsx` gained tests for severity-present and duplicate-present in
+      both the feed list and the detail panel, plus an explicit assertion that neither renders
+      for the (default, all-`null`) base fixture.
+
+**Scope note:** the ticket's "What to build" prose mentions the classification "can arrive after
+the post already rendered," but the concrete checklist above does not ask for live polling/push
+updates, and the existing app has no push channel for forum posts (unlike route jobs, which do
+poll). Implementing that was treated as out of scope here — it would need a new polling or SSE
+mechanism applied to the whole feed, which is a real design decision, not a natural extension of
+this ticket's 3 checklist items. In practice, a freshly-arrived classification becomes visible on
+the next natural feed fetch (closing a report detail already calls `loadFeed`, as does changing
+the hazard-type filter or loading more), just not while a user is staring at an unchanged feed
+screen. If live-refresh is wanted, it should be scoped as its own ticket.
+
+**Verified:** `npx tsc --noEmit`, `npx vitest run` (66/66, all suites) locally, then rebuilt and
+ran the `frontend-tests` service against a real disposable Compose stack (`docker compose ...
+run --rm --no-deps frontend-tests`, project `llm-t6-verify`) — build, typecheck, and full vitest
+suite all passed inside the container, matching CI's actual execution path.
 
 ## 7. Deliver route explanation on route job completion
 

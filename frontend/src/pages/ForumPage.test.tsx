@@ -31,6 +31,9 @@ const post = {
   my_vote: "none" as const,
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
+  llm_hazard_type_suggested: null,
+  llm_severity: null,
+  duplicate_of_post_id: null,
 };
 
 function baseFetchMock(): ReturnType<typeof vi.fn> {
@@ -56,6 +59,51 @@ describe("ForumPage", () => {
     expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
     expect(await screen.findByText(/Net votes received: 2/)).toBeTruthy();
     expect(screen.getByText(/reporter@example.com/)).toBeTruthy();
+    expect(screen.queryByText(/severity/i)).toBeNull();
+    expect(screen.queryByText(/Possible duplicate/)).toBeNull();
+  });
+
+  it("shows the LLM-suggested severity once classification has completed", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url.startsWith("/api/forum/posts?")) {
+        return Promise.resolve(jsonResponse({
+          items: [{ ...post, llm_severity: "high" as const }],
+          offset: 0,
+          limit: 20,
+          has_more: false,
+        }));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+
+    expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
+    expect(screen.getByText("High severity")).toBeTruthy();
+  });
+
+  it("flags a post as a possible duplicate once the backend has linked it", async () => {
+    const originalId = "88888888-8888-8888-8888-888888888888";
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url.startsWith("/api/forum/posts?")) {
+        return Promise.resolve(jsonResponse({
+          items: [{ ...post, duplicate_of_post_id: originalId }],
+          offset: 0,
+          limit: 20,
+          has_more: false,
+        }));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+
+    expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
+    expect(screen.getByText(`Possible duplicate of report ${originalId}`)).toBeTruthy();
   });
 
   it("blocks submission until title and description are filled in", async () => {
@@ -330,5 +378,39 @@ describe("ForumPage", () => {
     await user.click(screen.getByRole("button", { name: "Post comment" }));
 
     expect(await screen.findByText("Confirmed, cleared now.")).toBeTruthy();
+  });
+
+  it("shows severity and duplicate flags in the report detail view when classified", async () => {
+    const user = userEvent.setup();
+    const originalId = "88888888-8888-8888-8888-888888888888";
+    const detail = {
+      ...post,
+      body: "Wide and deep, watch out.",
+      media: [],
+      llm_severity: "medium" as const,
+      duplicate_of_post_id: originalId,
+    };
+    const fetchMock = baseFetchMock();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.startsWith("/api/forum/posts?") && method === "GET") {
+        return Promise.resolve(jsonResponse({ items: [post], offset: 0, limit: 20, has_more: false }));
+      }
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url === `/api/forum/posts/${post.id}`) return Promise.resolve(jsonResponse(detail));
+      if (url.startsWith(`/api/forum/posts/${post.id}/comments`) && method === "GET") {
+        return Promise.resolve(jsonResponse({ items: [], offset: 0, limit: 30, has_more: false }));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Deep pothole on Route 4" }));
+
+    expect(await screen.findByText("Wide and deep, watch out.")).toBeTruthy();
+    expect(screen.getByText("Medium severity")).toBeTruthy();
+    expect(screen.getByText(`Possible duplicate of report ${originalId}`)).toBeTruthy();
   });
 });

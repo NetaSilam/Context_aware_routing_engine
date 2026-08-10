@@ -184,7 +184,12 @@ Startup is deliberately split into stages:
 - `frontend/src/pages/PlanRoutePage.tsx` owns route submission, polling, preferences, and history.
 - `frontend/src/pages/ForumPage.tsx` owns the hazard-reporting feed: filtering, pagination, post
   creation, and opening a post into `components/forum/PostDetailPanel.tsx` for comments and
-  voting.
+  voting. Both `components/forum/PostList.tsx` and `PostDetailPanel.tsx` also render the LLM
+  triage/dedup output — a severity pill (`SEVERITY_LABELS`, `types/forum.ts`) when `llm_severity`
+  is set, and a "possible duplicate of ..." line when `duplicate_of_post_id` is set — with neither
+  rendering while those fields are still `null` (job not yet completed). There is no live
+  push/poll for these fields; they surface on the feed's normal fetch points (initial load,
+  filter change, load more, closing a report's detail view), not while a screen sits idle.
 - `frontend/src/pages/InboxPage.tsx` owns direct messaging: the conversation list, starting a new
   conversation by recipient user ID, and opening a thread into
   `components/messages/ConversationThread.tsx` for sending text/media replies.
