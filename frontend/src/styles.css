@@ -643,3 +643,17 @@ input {
 .forum-post-detail h2 {
   margin: 12px 0 4px;
 }
+
+.forum-media-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.forum-media-gallery__item {
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 12px;
+  object-fit: cover;
+}

@@ -90,6 +90,17 @@ class Settings(BaseSettings):
     forum_comment_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
     forum_vote_user_rate_limit: int = Field(default=60, ge=1, le=2000)
     forum_vote_ip_rate_limit: int = Field(default=180, ge=1, le=10_000)
+    forum_media_storage_path: Path = Field(default=Path("/data/forum-media"))
+    forum_media_max_image_bytes: int = Field(default=5_000_000, ge=1024, le=50_000_000)
+    forum_media_max_video_bytes: int = Field(default=25_000_000, ge=1024, le=200_000_000)
+    forum_media_allowed_image_content_types: str = Field(
+        default="image/jpeg,image/png,image/webp"
+    )
+    forum_media_allowed_video_content_types: str = Field(default="video/mp4,video/webm")
+    forum_media_max_items_per_post: int = Field(default=6, ge=1, le=50)
+    forum_media_max_items_per_comment: int = Field(default=3, ge=1, le=50)
+    forum_media_upload_user_rate_limit: int = Field(default=10, ge=1, le=500)
+    forum_media_upload_ip_rate_limit: int = Field(default=30, ge=1, le=2000)
 
     @field_validator("database_url")
     @classmethod
@@ -147,6 +158,8 @@ class Settings(BaseSettings):
             raise ValueError("forum comment per-user limit cannot exceed the per-IP limit")
         if self.forum_vote_user_rate_limit > self.forum_vote_ip_rate_limit:
             raise ValueError("forum vote per-user limit cannot exceed the per-IP limit")
+        if self.forum_media_upload_user_rate_limit > self.forum_media_upload_ip_rate_limit:
+            raise ValueError("forum media upload per-user limit cannot exceed the per-IP limit")
         return self
 
 

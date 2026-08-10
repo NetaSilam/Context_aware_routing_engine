@@ -185,12 +185,14 @@ grading.
    Ownership checks (edit/delete/rate-limit key) always use the stored `author_user_id`
    server-side and never trust a client-supplied identity.
 
-8. **Media storage.** Uploaded files are written to a dedicated Docker volume (e.g.
-   `/data/forum-media` inside the `api`/`worker` containers, backed by a named Compose volume),
-   never to PostgreSQL or Git. Each media row stores a generated storage key, declared content
-   type, and byte size; the file is validated (size cap, allowed MIME types: a small fixed image
-   and video allowlist) before being written to disk, and rejected before any write if it fails
-   validation.
+8. **Media storage.** Uploaded files are written to a dedicated Docker volume (implemented as the
+   named Compose volume `forum_media`, mounted at `/data/forum-media` inside the `api` container
+   only — not `worker`, since posting/commenting/voting/uploading are synchronous FastAPI work
+   with no Celery task, per decision 24), never to PostgreSQL or Git. Each media row stores a
+   generated storage key, declared content type, and byte size; the file is validated (size cap,
+   allowed MIME types: a small fixed image and video allowlist) before being written to disk, and
+   rejected before any write if it fails validation. The synchronous disk write runs via
+   `asyncio.to_thread` so it never blocks the event loop.
 
 9. **Media retrieval.** A single authenticated `GET /api/forum/media/{media_id}` endpoint streams
    the file only after checking the requester is allowed to see the owning post, comment, or DM
@@ -198,9 +200,21 @@ grading.
    DM media is readable only by sender/recipient). Media is never served by a guessable static
    path.
 
-10. **Size/type limits.** Maximum image size, maximum video size, and the accepted content-type
-    allowlist are validated configuration (`config.py`), with no committed usable default,
-    following the existing "Strict configuration" decision.
+10. **Size/type limits.** Maximum image size (default 5 MB), maximum video size (default 25 MB),
+    and the accepted content-type allowlist are validated configuration (`config.py`), with
+    sane-but-overridable defaults rather than a committed usable secret. A per-post and
+    per-comment maximum media-item count (defaults 6 and 3) is also validated configuration —
+    added during implementation, beyond what this PRD originally specified, because an unbounded
+    attachment count on a single post is a way around the per-file size cap and "storage abuse"
+    is an explicitly named course requirement (see PRD Problem Statement's guideline quote).
+
+10a. **Request-size middleware exemption.** The project's existing `RequestSizeLimitMiddleware`
+    (`request_bounds.py`) enforced one small blanket body-size ceiling (originally 16 KB, sized
+    for JSON API bodies) across every route. Media uploads need a larger ceiling to reach this
+    PRD's own tighter, content-type-specific checks at all. The middleware gained a path-suffix
+    match (any path ending `/media`) that swaps in a larger configured ceiling — the larger of
+    the image/video caps — only for upload endpoints; every other endpoint keeps the original
+    small ceiling unchanged.
 
 11. **Rate limiting.** Post creation, comment creation, vote changes, DM sends, and media uploads
     each get their own Redis-backed per-user (and per-IP for unauthenticated attempts, though the

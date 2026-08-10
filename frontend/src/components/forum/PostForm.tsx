@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import type { CreatePostRequest } from "../../api/forum";
 import { HAZARD_TYPE_LABELS, HAZARD_TYPES } from "../../types/forum";
@@ -6,7 +6,7 @@ import type { HazardType } from "../../types/forum";
 
 interface PostFormProps {
   disabled?: boolean;
-  onSubmit: (payload: CreatePostRequest) => Promise<void>;
+  onSubmit: (payload: CreatePostRequest, files: File[]) => Promise<void>;
 }
 
 export default function PostForm(props: PostFormProps): JSX.Element {
@@ -14,18 +14,25 @@ export default function PostForm(props: PostFormProps): JSX.Element {
   const [body, setBody] = useState("");
   const [hazardType, setHazardType] = useState<HazardType>("pothole");
   const [isAnonymous, setIsAnonymous] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await props.onSubmit({ title, body, hazard_type: hazardType, is_anonymous: isAnonymous });
+      await props.onSubmit(
+        { title, body, hazard_type: hazardType, is_anonymous: isAnonymous },
+        files,
+      );
       setTitle("");
       setBody("");
       setIsAnonymous(false);
+      setFiles([]);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the report.");
     } finally {
@@ -63,6 +70,16 @@ export default function PostForm(props: PostFormProps): JSX.Element {
           required
           rows={3}
           onChange={(event) => setBody(event.target.value)}
+        />
+      </label>
+      <label>
+        Photos or videos (optional)
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,video/*"
+          multiple
+          onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
         />
       </label>
       <label className="forum-post-form__checkbox">

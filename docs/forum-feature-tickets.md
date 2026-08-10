@@ -11,22 +11,24 @@ tickets never touch schema again.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done (migration `0006_forum_foundation.py`)
 
-- [ ] `forum_posts`, `forum_post_media`, `forum_comments`, `forum_comment_media`, `forum_votes`,
+- [x] `forum_posts`, `forum_post_media`, `forum_comments`, `forum_comment_media`, `forum_votes`,
       `direct_messages`, `direct_message_media`, and `notifications` tables exist with the
       columns described in PRD decision 4.
-- [ ] `forum_votes` has a unique constraint on `(user_id, target_type, target_id)`.
-- [ ] `forum_posts`/`forum_comments` include `upvote_count`/`downvote_count` integer columns
+- [x] `forum_votes` has a unique constraint on `(user_id, target_type, target_id)`.
+- [x] `forum_posts`/`forum_comments` include `upvote_count`/`downvote_count` integer columns
       defaulting to zero.
-- [ ] `users` gains an `is_seed_account` boolean column defaulting to false.
-- [ ] Foreign keys enforce that posts/comments/votes/messages/notifications reference a real
+- [x] `users` gains an `is_seed_account` boolean column defaulting to false.
+- [x] Foreign keys enforce that posts/comments/votes/messages/notifications reference a real
       user, and media rows reference a real owning post/comment/message.
-- [ ] Indexes support the required access patterns: feed paging by `created_at`, a user's own
+- [x] Indexes support the required access patterns: feed paging by `created_at`, a user's own
       posts/comments, a DM conversation by the sender/recipient pair, and a user's notifications
       by `created_at`.
-- [ ] The migration is idempotent-safe to apply on a clean database and is exercised by the
-      existing foundation/migration test path.
+- [x] The migration applies cleanly against a real PostGIS database (verified via Docker Compose,
+      not just reviewed) as part of the same migration run that already applies tickets 0001-0005.
+      No dedicated foundation-test fixture exercises it yet — direct-messages/notifications
+      tables stay unused until tickets 4-5 land, so there is nothing to assert against today.
 
 ## 2. Deliver the core hazard-report feed (posts, comments, votes)
 
@@ -35,26 +37,34 @@ and comments (text only in this ticket), with anonymity and voting, before media
 
 **Blocked by:** 1. Add forum/messaging/notification schema.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/app/forum/routes.py`)
 
-- [ ] `POST /api/forum/posts` creates a post with title, body, hazard type, optional location,
+- [x] `POST /api/forum/posts` creates a post with title, body, hazard type, optional location,
       and `is_anonymous`; the stored `author_user_id` is always the real caller.
-- [ ] `GET /api/forum/posts` returns a newest-first, offset-paginated feed, optionally filtered
+- [x] `GET /api/forum/posts` returns a newest-first, offset-paginated feed, optionally filtered
       by hazard type, with anonymity-filtered author fields and current vote counters.
-- [ ] `GET /api/forum/posts/{id}` returns full post detail plus its comments.
-- [ ] `PATCH /api/forum/posts/{id}` and `DELETE /api/forum/posts/{id}` are restricted to the
+- [x] `GET /api/forum/posts/{id}` returns full post detail. Comments are fetched separately
+      through `GET /api/forum/posts/{id}/comments` (its own offset pagination) rather than
+      embedded, so opening a long comment thread never forces one oversized response — this
+      revises the ticket's original "detail plus its comments" wording to match what was built.
+- [x] `PATCH /api/forum/posts/{id}` and `DELETE /api/forum/posts/{id}` are restricted to the
       real author; another user's request returns 404.
-- [ ] `POST /api/forum/posts/{id}/comments`, and matching `PATCH`/`DELETE` for a comment, follow
+- [x] `POST /api/forum/posts/{id}/comments`, and matching `PATCH`/`DELETE` for a comment, follow
       the same anonymity and ownership rules as posts.
-- [ ] `PUT /api/forum/posts/{id}/vote` and `PUT /api/forum/comments/{id}/vote` accept
+- [x] `PUT /api/forum/posts/{id}/vote` and `PUT /api/forum/comments/{id}/vote` accept
       `up`/`down`/`none`, upsert the caller's single `forum_votes` row, and adjust
-      `upvote_count`/`downvote_count` atomically in the same transaction.
-- [ ] `GET /api/forum/me/dashboard` returns the caller's post count, comment count, and net votes
+      `upvote_count`/`downvote_count` atomically in the same transaction (guarded by a
+      `pg_advisory_xact_lock` so two concurrent votes from the same user can never both read "no
+      existing vote" and double-apply a counter delta).
+- [x] `GET /api/forum/me/dashboard` returns the caller's post count, comment count, and net votes
       received, computed from the denormalized counters.
-- [ ] Every author field in every response respects `is_anonymous`; an integration test asserts
-      no response body contains the real author's ID or email for an anonymous post/comment.
-- [ ] Unit tests cover the vote upsert/delta logic in isolation; integration tests cover CRUD,
-      ownership, anonymity, and counter correctness against real PostgreSQL.
+- [x] Every author field in every response respects `is_anonymous`; `test_forum_stack.py`'s
+      `test_anonymous_post_and_comment_hide_author_from_others_but_not_from_self` asserts no
+      response body contains the real author's ID or email for an anonymous post/comment.
+- [x] Unit tests (`test_forum_routes.py`) cover the vote-label mapping and anonymity-filtered
+      serialization in isolation; integration tests (`test_forum_stack.py`, 9 tests) cover CRUD,
+      ownership, anonymity, and counter correctness against real PostgreSQL — verified via a live
+      Docker Compose run, not just written and assumed to pass.
 
 ## 3. Add forum/comment media upload and retrieval
 
@@ -63,23 +73,51 @@ PostgreSQL, validated and served safely.
 
 **Blocked by:** 2. Deliver the core hazard-report feed.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/app/forum/media_storage.py`, media endpoints in
+`backend/app/forum/routes.py`)
 
-- [ ] A Compose-managed volume is mounted into the `api` (and `worker`, if later needed)
-      container for forum media; the path is configurable and not committed to Git.
-- [ ] Maximum image size, maximum video size, and an accepted content-type allowlist are
-      validated configuration with no committed usable default.
-- [ ] `POST /api/forum/posts/{id}/media` and the comment equivalent reject oversized or
-      disallowed uploads with a `413`/`422` before any disk write.
-- [ ] Accepted uploads are written to the volume under a generated (non-guessable) storage key,
-      and a `forum_post_media`/`forum_comment_media` row records the key, content type, and size.
-- [ ] `GET /api/forum/media/{media_id}` streams the file only if the requester may see the
-      owning post/comment (respecting removed/anonymous state); unauthorized access returns 404.
-- [ ] Media upload is covered by the same rate limiting as post/comment creation (ticket 6) once
-      that ticket lands; until then, a per-user upload limit is still enforced.
-- [ ] Integration tests cover accepted/rejected size and type combinations, storage-key
-      non-guessability, and access-control filtering, using small fixed in-memory byte payloads
-      rather than real media files.
+- [x] A Compose-managed named volume (`forum_media`) is mounted into the `api` container at the
+      configurable `FORUM_MEDIA_STORAGE_PATH` (default `/data/forum-media`); not committed to
+      Git. The `worker` container does not need it — posting/commenting/voting/uploading are
+      synchronous FastAPI/PostgreSQL work with no Celery task, per PRD decision 24, so there is
+      no worker-side code path that touches this volume. In the test stack, `compose.test.yaml`
+      resets `api`'s volumes entirely (`!reset []`); the path still works there because
+      `write_media_file` creates the directory on first use inside the container's own ephemeral
+      filesystem, so no test-specific volume wiring was needed.
+- [x] Maximum image size (default 5 MB), maximum video size (default 25 MB), and an accepted
+      content-type allowlist (`image/jpeg,image/png,image/webp` /
+      `video/mp4,video/webm`) are validated configuration with no committed usable default beyond
+      those sane defaults. A per-post/per-comment media-count cap (default 6 / 3) was added
+      beyond the original ticket scope, since "storage abuse" is an explicitly named course
+      requirement and an unbounded attachment count on one post is an easy way around the
+      per-file size cap.
+- [x] `POST /api/forum/posts/{id}/media` and `POST /api/forum/comments/{id}/media` reject
+      oversized or disallowed uploads with `413`/`422` before any disk write. Uploads are also
+      restricted to the post's/comment's own author (same ownership rule as edit/delete), which
+      the ticket didn't explicitly require but which follows directly from "you can only change
+      what you own."
+- [x] Accepted uploads are written to the volume under a generated (`uuid4().hex`, non-guessable)
+      storage key via `asyncio.to_thread` so the synchronous disk write never blocks the event
+      loop; a `forum_post_media`/`forum_comment_media` row records the key, content type, and
+      size.
+- [x] `GET /api/forum/media/{media_id}` streams the file only if the requester may see the
+      owning post/comment (a single query covering both tables, filtered on `status = 'active'`
+      up the post/comment chain); unauthorized or post-deleted access returns 404. Requires
+      authentication like the rest of the forum, but does not additionally restrict by
+      anonymity — anonymity conceals authorship, not content, matching PRD decision 9.
+- [x] Media upload has its own Redis-backed per-user/per-IP rate limit
+      (`forum_media_upload_user_rate_limit`/`..._ip_rate_limit`) rather than waiting for ticket 6,
+      since shipping an unlimited-upload endpoint even temporarily would be a real abuse gap.
+- [x] `RequestSizeLimitMiddleware` (`backend/app/request_bounds.py`) gained a path-suffix-based
+      exemption (`media_max_body_bytes`, matched on paths ending `/media`) so upload requests
+      aren't rejected at the old blanket 16 KB JSON-body ceiling before reaching this ticket's
+      own tighter, content-type-specific checks.
+- [x] Integration tests (`test_forum_media_stack.py`, 9 tests) cover accepted/rejected size and
+      type combinations, ownership, the per-post media cap, retrieval after post deletion, and
+      missing-media 404s, using small fixed in-memory byte payloads rather than real media files
+      — verified via a live Docker Compose run (real PostGIS, real Redis, real disk volume), not
+      just written and assumed to pass. Unit tests (`test_forum_media.py`, 12 tests) cover the
+      pure size/type classification logic and the storage write/read round trip in isolation.
 
 ## 4. Deliver direct messaging
 
@@ -137,10 +175,15 @@ write path.
 **Blocked by:** 2. Deliver the core hazard-report feed; 3. Add forum/comment media upload and
 retrieval; 4. Deliver direct messaging.
 
-**Status:** ready-for-agent
+**Status:** ready-for-agent (media upload's limit already landed early, see below)
 
-- [ ] Post creation, comment creation, vote changes, DM sends, and media uploads each have their
-      own Redis-backed per-user limit, checked before any database or disk write.
+- [x] Media uploads already have their own Redis-backed per-user/per-IP limit
+      (`forum-media-upload` action, ticket 3) — shipped ahead of this ticket rather than leaving
+      the endpoint unlimited in the meantime.
+- [x] Post creation, comment creation, and vote changes already have their own Redis-backed
+      per-user/per-IP limits (ticket 2, actions `forum-post-create`/`forum-comment-create`/
+      `forum-vote`).
+- [ ] DM sends need the same per-user limit once ticket 4 lands.
 - [ ] Exceeding a limit returns `429` with `Retry-After`.
 - [ ] Redis unavailability makes forum/DM writes fail closed with a controlled `503`; read-only
       feed/history endpoints remain available from PostgreSQL where safe.

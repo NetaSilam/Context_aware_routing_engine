@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Text, bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,6 +15,7 @@ from app.abuse_protection import enforce_action_rate_limit
 from app.auth import get_current_user, require_trusted_origin
 from app.config import get_settings
 from app.db import get_engine
+from app.forum.media_storage import classify_and_validate_media, read_media_file, write_media_file
 from app.request_bounds import reject_unexpected_query_parameters
 
 router = APIRouter(prefix="/api/forum", tags=["forum"])
@@ -64,6 +66,13 @@ class VoteRequest(StrictRequest):
     value: VoteValue
 
 
+class MediaItem(BaseModel):
+    id: UUID
+    media_type: str
+    content_type: str
+    byte_size: int
+
+
 class PostSummary(BaseModel):
     id: UUID
     title: str
@@ -84,6 +93,7 @@ class PostSummary(BaseModel):
 
 class PostDetail(PostSummary):
     body: str
+    media: list[MediaItem]
 
 
 class CommentOut(BaseModel):
@@ -97,6 +107,7 @@ class CommentOut(BaseModel):
     upvote_count: int
     downvote_count: int
     my_vote: VoteValue
+    media: list[MediaItem]
     created_at: datetime
     updated_at: datetime
 
@@ -137,7 +148,7 @@ def _vote_label(value: int | None) -> VoteValue:
     return "none"
 
 
-def _serialize_post(row: Any, viewer_id: int) -> dict[str, Any]:
+def _serialize_post(row: Any, viewer_id: int, *, media: list[Any] | None = None) -> dict[str, Any]:
     is_anonymous = row["is_anonymous"]
     is_own = row["author_user_id"] == viewer_id
     fields = {
@@ -159,10 +170,11 @@ def _serialize_post(row: Any, viewer_id: int) -> dict[str, Any]:
     }
     if "body" in row.keys():
         fields["body"] = row["body"]
+        fields["media"] = [dict(item) for item in (media or [])]
     return fields
 
 
-def _serialize_comment(row: Any, viewer_id: int) -> dict[str, Any]:
+def _serialize_comment(row: Any, viewer_id: int, *, media: list[Any] | None = None) -> dict[str, Any]:
     is_anonymous = row["is_anonymous"]
     is_own = row["author_user_id"] == viewer_id
     return {
@@ -176,6 +188,7 @@ def _serialize_comment(row: Any, viewer_id: int) -> dict[str, Any]:
         "upvote_count": row["upvote_count"],
         "downvote_count": row["downvote_count"],
         "my_vote": _vote_label(row["my_vote_value"]),
+        "media": [dict(item) for item in (media or [])],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -193,6 +206,43 @@ async def _get_active_post_or_404(connection: AsyncConnection, post_id: UUID) ->
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found.")
     return row
+
+
+async def _fetch_post_media(connection: AsyncConnection, post_id: UUID) -> list[Any]:
+    return (
+        await connection.execute(
+            text(
+                """
+                SELECT id, media_type, content_type, byte_size FROM app.forum_post_media
+                WHERE post_id = :post_id ORDER BY created_at ASC
+                """
+            ),
+            {"post_id": post_id},
+        )
+    ).mappings().all()
+
+
+async def _fetch_comment_media_by_comment(
+    connection: AsyncConnection, comment_ids: list[UUID]
+) -> dict[UUID, list[Any]]:
+    if not comment_ids:
+        return {}
+    rows = (
+        await connection.execute(
+            text(
+                """
+                SELECT id, comment_id, media_type, content_type, byte_size
+                FROM app.forum_comment_media
+                WHERE comment_id = ANY(:comment_ids) ORDER BY created_at ASC
+                """
+            ),
+            {"comment_ids": comment_ids},
+        )
+    ).mappings().all()
+    grouped: dict[UUID, list[Any]] = {comment_id: [] for comment_id in comment_ids}
+    for row in rows:
+        grouped[row["comment_id"]].append(row)
+    return grouped
 
 
 @router.post("/posts", response_model=PostDetail, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_trusted_origin)])
@@ -320,11 +370,12 @@ async def get_post(
                     {"id": post_id, "viewer_id": viewer_id},
                 )
             ).mappings().first()
+            if row is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found.")
+            media = await _fetch_post_media(connection, post_id)
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found.")
-    return _serialize_post(row, viewer_id)
+    return _serialize_post(row, viewer_id, media=media)
 
 
 @router.patch("/posts/{post_id}", response_model=PostDetail, dependencies=[Depends(require_trusted_origin)])
@@ -372,9 +423,10 @@ async def update_post(
                     {"id": post_id, "viewer_id": viewer_id},
                 )
             ).mappings().one()
+            media = await _fetch_post_media(connection, post_id)
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
-    return _serialize_post(row, viewer_id)
+    return _serialize_post(row, viewer_id, media=media)
 
 
 @router.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_trusted_origin)])
@@ -494,9 +546,16 @@ async def list_comments(
                     },
                 )
             ).mappings().all()
+            page_rows = rows[:limit]
+            media_by_comment = await _fetch_comment_media_by_comment(
+                connection, [row["id"] for row in page_rows]
+            )
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
-    items = [_serialize_comment(row, viewer_id) for row in rows[:limit]]
+    items = [
+        _serialize_comment(row, viewer_id, media=media_by_comment.get(row["id"], []))
+        for row in page_rows
+    ]
     return {"items": items, "offset": offset, "limit": limit, "has_more": len(rows) > limit}
 
 
@@ -541,9 +600,10 @@ async def update_comment(
                     {"id": comment_id, "viewer_id": viewer_id},
                 )
             ).mappings().one()
+            media = await _fetch_comment_media_by_comment(connection, [comment_id])
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
-    return _serialize_comment(row, viewer_id)
+    return _serialize_comment(row, viewer_id, media=media.get(comment_id, []))
 
 
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_trusted_origin)])
@@ -742,3 +802,185 @@ async def get_my_dashboard(user: dict[str, Any] = Depends(get_current_user)) -> 
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
     return dict(row)
+
+
+def _normalized_content_type(upload: UploadFile) -> str:
+    return (upload.content_type or "").split(";")[0].strip().lower()
+
+
+@router.post(
+    "/posts/{post_id}/media",
+    response_model=MediaItem,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_trusted_origin)],
+)
+async def upload_post_media(
+    post_id: UUID,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    settings = get_settings()
+    await enforce_action_rate_limit(
+        "forum-media-upload",
+        request,
+        int(user["id"]),
+        user_limit=settings.forum_media_upload_user_rate_limit,
+        ip_limit=settings.forum_media_upload_ip_rate_limit,
+    )
+    data = await file.read()
+    content_type = _normalized_content_type(file)
+    media_type = classify_and_validate_media(content_type, len(data), settings)
+    media_id = uuid4()
+    try:
+        async with get_engine().begin() as connection:
+            owned = (
+                await connection.execute(
+                    text(
+                        "SELECT id FROM app.forum_posts WHERE id = :id AND author_user_id = :author_user_id AND status = 'active'"
+                    ),
+                    {"id": post_id, "author_user_id": user["id"]},
+                )
+            ).mappings().first()
+            if owned is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found.")
+            existing_count = (
+                await connection.execute(
+                    text("SELECT COUNT(*) FROM app.forum_post_media WHERE post_id = :post_id"),
+                    {"post_id": post_id},
+                )
+            ).scalar_one()
+            if existing_count >= settings.forum_media_max_items_per_post:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="This post already has the maximum number of media attachments.",
+                )
+            storage_key = await asyncio.to_thread(write_media_file, settings, data)
+            row = (
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO app.forum_post_media
+                            (id, post_id, media_type, storage_key, content_type, byte_size)
+                        VALUES (:id, :post_id, :media_type, :storage_key, :content_type, :byte_size)
+                        RETURNING id, media_type, content_type, byte_size
+                        """
+                    ),
+                    {
+                        "id": media_id,
+                        "post_id": post_id,
+                        "media_type": media_type,
+                        "storage_key": storage_key,
+                        "content_type": content_type,
+                        "byte_size": len(data),
+                    },
+                )
+            ).mappings().one()
+    except SQLAlchemyError as exc:
+        raise _service_unavailable("The forum media service is temporarily unavailable.") from exc
+    return dict(row)
+
+
+@router.post(
+    "/comments/{comment_id}/media",
+    response_model=MediaItem,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_trusted_origin)],
+)
+async def upload_comment_media(
+    comment_id: UUID,
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+    settings = get_settings()
+    await enforce_action_rate_limit(
+        "forum-media-upload",
+        request,
+        int(user["id"]),
+        user_limit=settings.forum_media_upload_user_rate_limit,
+        ip_limit=settings.forum_media_upload_ip_rate_limit,
+    )
+    data = await file.read()
+    content_type = _normalized_content_type(file)
+    media_type = classify_and_validate_media(content_type, len(data), settings)
+    media_id = uuid4()
+    try:
+        async with get_engine().begin() as connection:
+            owned = (
+                await connection.execute(
+                    text(
+                        "SELECT id FROM app.forum_comments WHERE id = :id AND author_user_id = :author_user_id AND status = 'active'"
+                    ),
+                    {"id": comment_id, "author_user_id": user["id"]},
+                )
+            ).mappings().first()
+            if owned is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found.")
+            existing_count = (
+                await connection.execute(
+                    text("SELECT COUNT(*) FROM app.forum_comment_media WHERE comment_id = :comment_id"),
+                    {"comment_id": comment_id},
+                )
+            ).scalar_one()
+            if existing_count >= settings.forum_media_max_items_per_comment:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="This comment already has the maximum number of media attachments.",
+                )
+            storage_key = await asyncio.to_thread(write_media_file, settings, data)
+            row = (
+                await connection.execute(
+                    text(
+                        """
+                        INSERT INTO app.forum_comment_media
+                            (id, comment_id, media_type, storage_key, content_type, byte_size)
+                        VALUES (:id, :comment_id, :media_type, :storage_key, :content_type, :byte_size)
+                        RETURNING id, media_type, content_type, byte_size
+                        """
+                    ),
+                    {
+                        "id": media_id,
+                        "comment_id": comment_id,
+                        "media_type": media_type,
+                        "storage_key": storage_key,
+                        "content_type": content_type,
+                        "byte_size": len(data),
+                    },
+                )
+            ).mappings().one()
+    except SQLAlchemyError as exc:
+        raise _service_unavailable("The forum media service is temporarily unavailable.") from exc
+    return dict(row)
+
+
+@router.get("/media/{media_id}")
+async def get_media(media_id: UUID, user: dict[str, Any] = Depends(get_current_user)) -> Response:
+    settings = get_settings()
+    try:
+        async with get_engine().begin() as connection:
+            row = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT pm.storage_key, pm.content_type
+                        FROM app.forum_post_media pm
+                        JOIN app.forum_posts p ON p.id = pm.post_id
+                        WHERE pm.id = :id AND p.status = 'active'
+                        UNION ALL
+                        SELECT cm.storage_key, cm.content_type
+                        FROM app.forum_comment_media cm
+                        JOIN app.forum_comments c ON c.id = cm.comment_id
+                        JOIN app.forum_posts p ON p.id = c.post_id
+                        WHERE cm.id = :id AND c.status = 'active' AND p.status = 'active'
+                        """
+                    ),
+                    {"id": media_id},
+                )
+            ).mappings().first()
+    except SQLAlchemyError as exc:
+        raise _service_unavailable("The forum media service is temporarily unavailable.") from exc
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found.")
+    data = await asyncio.to_thread(read_media_file, settings, row["storage_key"])
+    return Response(content=data, media_type=row["content_type"])

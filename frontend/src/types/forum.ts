@@ -9,6 +9,15 @@ export type HazardType =
 
 export type VoteValue = "up" | "down" | "none";
 
+export type MediaType = "image" | "video";
+
+export interface MediaItem {
+  id: string;
+  media_type: MediaType;
+  content_type: string;
+  byte_size: number;
+}
+
 export interface PostSummary {
   id: string;
   title: string;
@@ -29,6 +38,7 @@ export interface PostSummary {
 
 export interface PostDetail extends PostSummary {
   body: string;
+  media: MediaItem[];
 }
 
 export interface CommentItem {
@@ -42,6 +52,7 @@ export interface CommentItem {
   upvote_count: number;
   downvote_count: number;
   my_vote: VoteValue;
+  media: MediaItem[];
   created_at: string;
   updated_at: string;
 }

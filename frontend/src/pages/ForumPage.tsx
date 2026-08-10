@@ -8,6 +8,8 @@ import {
   getPost,
   listComments,
   listPosts,
+  uploadCommentMedia,
+  uploadPostMedia,
   voteOnComment,
   voteOnPost,
 } from "../api/forum";
@@ -65,8 +67,11 @@ export default function ForumPage(): JSX.Element {
     }
   }
 
-  async function handleCreatePost(payload: Parameters<typeof createPost>[0]) {
+  async function handleCreatePost(payload: Parameters<typeof createPost>[0], files: File[]) {
     const created = await createPost(payload);
+    for (const file of files) {
+      await uploadPostMedia(created.id, file);
+    }
     setPosts((current) => [
       {
         id: created.id,
@@ -136,10 +141,15 @@ export default function ForumPage(): JSX.Element {
     });
   }
 
-  async function handleAddComment(body: string, isAnonymous: boolean) {
+  async function handleAddComment(body: string, isAnonymous: boolean, files: File[]) {
     if (!selectedPost) return;
     const created = await createComment(selectedPost.id, { body, is_anonymous: isAnonymous });
-    setComments((current) => [...current, created]);
+    let media = created.media;
+    for (const file of files) {
+      const uploaded = await uploadCommentMedia(created.id, file);
+      media = [...media, uploaded];
+    }
+    setComments((current) => [...current, { ...created, media }]);
     setSelectedPost((current) =>
       current ? { ...current, comment_count: current.comment_count + 1 } : current,
     );

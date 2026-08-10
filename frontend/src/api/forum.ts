@@ -3,6 +3,7 @@ import type {
   CommentPage,
   DashboardSummary,
   HazardType,
+  MediaItem,
   PostDetail,
   PostPage,
   VoteValue,
@@ -132,4 +133,29 @@ export async function voteOnComment(commentId: string, value: VoteValue): Promis
 
 export async function getMyForumDashboard(): Promise<DashboardSummary> {
   return request<DashboardSummary>("/api/forum/me/dashboard");
+}
+
+async function uploadMedia(path: string, file: File): Promise<MediaItem> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "include",
+    headers: { Origin: window.location.origin },
+    body: formData,
+  });
+  if (!response.ok) throw new Error(await parseError(response));
+  return response.json() as Promise<MediaItem>;
+}
+
+export async function uploadPostMedia(postId: string, file: File): Promise<MediaItem> {
+  return uploadMedia(`/api/forum/posts/${encodeURIComponent(postId)}/media`, file);
+}
+
+export async function uploadCommentMedia(commentId: string, file: File): Promise<MediaItem> {
+  return uploadMedia(`/api/forum/comments/${encodeURIComponent(commentId)}/media`, file);
+}
+
+export function mediaUrl(mediaId: string): string {
+  return `/api/forum/media/${encodeURIComponent(mediaId)}`;
 }

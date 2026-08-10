@@ -91,6 +91,7 @@ services:
         condition: service_healthy
     volumes:
       - ./osrm/deployment-compatibility.json:/osrm/deployment-compatibility.json:ro
+      - forum_media:/data/forum-media
     expose:
       - "8000"
     healthcheck:
@@ -140,3 +141,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  forum_media:

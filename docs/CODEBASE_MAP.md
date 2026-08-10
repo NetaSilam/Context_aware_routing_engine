@@ -84,10 +84,12 @@ Startup is deliberately split into stages:
 - `backend/app/routing/route_jobs.py` defines route-job request/response models and endpoints for
   creation, polling, history, reopen, run-again, and deletion.
 - `backend/app/forum/routes.py` implements the hazard-reporting forum: post/comment CRUD,
-  anonymity-filtered serialization, and up/down/none voting with atomically maintained counters.
-  Requests are ordinary synchronous FastAPI/PostgreSQL work (no Celery task), since posting,
-  commenting, and voting are bounded writes unlike OSRM/PostGIS route scoring. Direct messages,
-  media attachments, live notifications, and cold seeding are designed in
+  anonymity-filtered serialization, up/down/none voting with atomically maintained counters, and
+  image/video media upload/retrieval for posts and comments. Requests are ordinary synchronous
+  FastAPI/PostgreSQL work (no Celery task), since posting, commenting, voting, and uploading are
+  bounded writes unlike OSRM/PostGIS route scoring. `backend/app/forum/media_storage.py` owns
+  media content-type/size classification and the disk read/write helpers backing that volume.
+  Direct messages, live notifications, and cold seeding are designed in
   `docs/FORUM_FEATURE_PRD.md` but not yet implemented; see `docs/forum-feature-tickets.md` for
   status.
 
@@ -132,7 +134,7 @@ Startup is deliberately split into stages:
 - `frontend/src/components/route-jobs/` contains coordinate acquisition, job state rendering, and
   route-history controls.
 - `frontend/src/components/forum/` contains the post form, feed list, post detail/comment panel,
-  and shared vote-button component.
+  shared vote-button component, and the media gallery that renders uploaded images/videos inline.
 - `frontend/src/components/auth/` contains the signup/login/profile UI.
 - `frontend/src/components/canonical-network/` and
   `frontend/src/components/accident-attribution/` contain map filters and detail panels.
@@ -162,9 +164,10 @@ Startup is deliberately split into stages:
 ## Tests and verification
 
 - Backend unit and integration tests are under `backend/tests/`, including
-  `test_forum_routes.py` (pure vote/serialization/validation logic, no database) and
-  `test_forum_stack.py` (real PostgreSQL/Redis integration: CRUD, ownership, anonymity leak
-  checks, vote counters, and the dashboard aggregate).
+  `test_forum_routes.py` and `test_forum_media.py` (pure vote/serialization/media-validation
+  logic, no database) and `test_forum_stack.py`/`test_forum_media_stack.py` (real
+  PostgreSQL/Redis/disk integration: CRUD, ownership, anonymity leak checks, vote counters, the
+  dashboard aggregate, and media upload/retrieval/size/type/ownership/count-cap behavior).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
@@ -189,7 +192,7 @@ Startup is deliberately split into stages:
 | Change database schema | Add an Alembic migration under `backend/alembic/versions/` and update initialization/tests |
 | Change route candidate graph | `osrm/`, Compose OSRM service, compatibility manifest, OSRM tests |
 | Change explorer data | `backend/app/data_routes.py`, frontend explorer API/types/pages, fixture/data docs |
-| Change the forum (posts/comments/votes/DMs/notifications) | `backend/app/forum/routes.py`, an Alembic migration, `frontend/src/pages/ForumPage.tsx` and `components/forum/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` for design intent and remaining scope |
+| Change the forum (posts/comments/votes/media/DMs/notifications) | `backend/app/forum/routes.py`, `backend/app/forum/media_storage.py` for uploads, an Alembic migration, `frontend/src/pages/ForumPage.tsx` and `components/forum/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` for design intent and remaining scope |
 
 ## Important boundaries
 
@@ -204,3 +207,6 @@ Startup is deliberately split into stages:
 - Forum posts/comments always store the real `author_user_id`; `is_anonymous` controls only
   API-response visibility, never ownership or rate-limit identity. Do not add a code path that
   reveals a true author to another user when `is_anonymous` is true.
+- Forum media lives on the `forum_media` Docker volume, not in PostgreSQL. Never serve it from a
+  guessable static path — always go through the ownership-checked `GET /api/forum/media/{id}`
+  endpoint.

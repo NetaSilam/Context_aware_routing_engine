@@ -70,7 +70,7 @@ describe("ForumPage", () => {
       if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
       if (url === "/api/forum/posts" && method === "POST") {
         return Promise.resolve(jsonResponse(
-          { ...post, id: "22222222-2222-2222-2222-222222222222", title: "Flooded underpass", body: "Deep water.", upvote_count: 0, comment_count: 0 },
+          { ...post, id: "22222222-2222-2222-2222-222222222222", title: "Flooded underpass", body: "Deep water.", media: [], upvote_count: 0, comment_count: 0 },
           201,
         ));
       }
@@ -89,6 +89,49 @@ describe("ForumPage", () => {
       "/api/forum/posts",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("uploads a selected photo to the newly created report", async () => {
+    const user = userEvent.setup();
+    const createdId = "22222222-2222-2222-2222-222222222222";
+    const fetchMock = baseFetchMock();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.startsWith("/api/forum/posts?") && method === "GET") {
+        return Promise.resolve(jsonResponse({ items: [post], offset: 0, limit: 20, has_more: false }));
+      }
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url === "/api/forum/posts" && method === "POST") {
+        return Promise.resolve(jsonResponse(
+          { ...post, id: createdId, title: "Flooded underpass", body: "Deep water.", media: [], upvote_count: 0, comment_count: 0 },
+          201,
+        ));
+      }
+      if (url === `/api/forum/posts/${createdId}/media` && method === "POST") {
+        return Promise.resolve(jsonResponse(
+          { id: "55555555-5555-5555-5555-555555555555", media_type: "image", content_type: "image/png", byte_size: 4 },
+          201,
+        ));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+    await screen.findByText("Deep pothole on Route 4");
+
+    await user.type(screen.getByLabelText("Title"), "Flooded underpass");
+    await user.type(screen.getByLabelText("Description"), "Deep water.");
+    const file = new File(["fake"], "hazard.png", { type: "image/png" });
+    await user.upload(screen.getByLabelText("Photos or videos (optional)"), file);
+    await user.click(screen.getByRole("button", { name: "Report hazard" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      `/api/forum/posts/${createdId}/media`,
+      expect.objectContaining({ method: "POST" }),
+    ));
+    const mediaCall = fetchMock.mock.calls.find(([url]) => String(url) === `/api/forum/posts/${createdId}/media`);
+    expect(mediaCall?.[1]?.body).toBeInstanceOf(FormData);
   });
 
   it("optimistically applies a vote and calls the vote endpoint", async () => {
@@ -124,7 +167,7 @@ describe("ForumPage", () => {
 
   it("opens a report, shows comments, and posts a new comment", async () => {
     const user = userEvent.setup();
-    const detail = { ...post, body: "Wide and deep, watch out." };
+    const detail = { ...post, body: "Wide and deep, watch out.", media: [] };
     const comment = {
       id: "33333333-3333-3333-3333-333333333333",
       post_id: post.id,
@@ -136,6 +179,7 @@ describe("ForumPage", () => {
       upvote_count: 0,
       downvote_count: 0,
       my_vote: "none" as const,
+      media: [],
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
     };

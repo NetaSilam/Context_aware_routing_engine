@@ -295,7 +295,7 @@ services:
 
   forum-tests:
     build: ./backend
-    command: ["pytest", "-q", "-m", "integration", "tests/test_forum_stack.py"]
+    command: ["pytest", "-q", "-m", "integration", "tests/test_forum_stack.py", "tests/test_forum_media_stack.py"]
     environment:
       DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
       REDIS_URL: redis://redis:6379/0

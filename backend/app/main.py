@@ -41,6 +41,9 @@ def create_app() -> FastAPI:
         RequestSizeLimitMiddleware,
         max_body_bytes=settings.request_body_max_bytes,
         max_query_bytes=settings.request_query_max_bytes,
+        media_max_body_bytes=max(
+            settings.forum_media_max_image_bytes, settings.forum_media_max_video_bytes
+        ),
     )
 
     app.include_router(health_router)
