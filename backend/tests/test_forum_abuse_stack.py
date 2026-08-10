@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from uuid import uuid4
 
 import httpx
@@ -207,3 +208,31 @@ def test_redis_outage_fails_closed_for_dm_send_but_keeps_conversation_readable()
         timeout=5,
     )
     assert conversations.status_code == 200
+
+
+def test_a_post_created_against_the_isolated_abuse_api_still_gets_triaged_by_the_shared_llm_worker() -> None:
+    # abuse-api runs on its own isolated Redis db (see REDIS_URL above) so its rate-limit/capacity
+    # state never cross-talks with other test services — but app.llm.tasks.celery_app's Celery
+    # broker used to be bound to that SAME isolated db at import time, meaning any LLM job an
+    # isolated api service enqueued had zero consumers (llm-worker-fast/slow only ever listen on
+    # the shared db) and sat 'queued' forever. Fixed via LLM_QUEUE_BROKER_URL (see compose.test.yaml),
+    # mirroring the existing ROUTE_QUEUE_BROKER_URL pattern. This proves the fix for real: a post
+    # created here must still reach a terminal triage state via the shared llm-worker-fast.
+    _, cookie = signup("llm-routing")
+    post = create_post(API_URL, cookie)
+    assert post.status_code == 201, post.text
+    post_id = post.json()["id"]
+
+    deadline = time.monotonic() + 15
+    status = None
+    while time.monotonic() < deadline:
+        with psycopg.connect(DATABASE_URL) as connection:
+            row = connection.execute(
+                "SELECT status FROM app.llm_jobs WHERE subject_post_id = %s AND kind = 'triage'",
+                (post_id,),
+            ).fetchone()
+        if row is not None and row[0] in {"completed", "failed"}:
+            status = row[0]
+            break
+        time.sleep(0.2)
+    assert status == "completed", f"triage job for post {post_id} never completed (last status: {status})"

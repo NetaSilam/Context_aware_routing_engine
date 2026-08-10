@@ -123,7 +123,16 @@ Startup is deliberately split into stages:
   a slow job from blocking fast ones (`docs/LLM_FEATURE_PRD.md` decision 2). `app/llm/service.py`'s
   `create_llm_job`/`enqueue_llm_job` (mirroring `notifications/service.py`'s two-phase
   create/publish split) compute each job's estimated duration and queue via
-  `app/llm/scheduling.py`. See `docs/LLM_FEATURE_PRD.md` for the hazard-report triage/dedup and
+  `app/llm/scheduling.py`. `enqueue_llm_job` builds a fresh, lightweight Celery client per call and
+  sends by task name (mirrors `app/routing/route_jobs.py`'s `_queue_client()`/`_publish_job()`)
+  rather than reusing `app.llm.tasks.celery_app`'s persistent module-level object — this matters
+  for real correctness: a caller with its *own* isolated Redis db for rate-limit/capacity state
+  (`stress-api`, `abuse-api` — see `LLM_QUEUE_BROKER_URL` in `compose.test.yaml`, mirroring the
+  existing `ROUTE_QUEUE_BROKER_URL`/`route_queue_broker_url` pattern) still needs its enqueued jobs
+  to land on the *shared* broker `llm-worker-fast`/`llm-worker-slow` actually listen on, not
+  silently orphaned on its own db forever (a real bug found and fixed during ticket 9's stress
+  verification — see `llm-feature-tickets.md` ticket 9's status for the negative-control proof).
+  See `docs/LLM_FEATURE_PRD.md` for the hazard-report triage/dedup and
   route-explanation features this queue exists to serve, and `docs/llm-feature-tickets.md` for what
   is implemented versus planned. Migration `0007_llm_jobs.py` adds `app.llm_jobs` and nullable
   classification columns on `app.forum_posts` (`0008` relaxed its subject-presence constraint to
@@ -285,6 +294,16 @@ Startup is deliberately split into stages:
   `httpx.MockTransport` stands in for Gemini on the real-call path (well-formed/malformed
   responses, non-2xx status, missing fields), and the mocked (`settings.testing`) path is proven to
   never construct `httpx.AsyncClient` at all by monkeypatching it to raise if called.
+  It also proves `GEMINI_API_KEY` never leaks into process output on a provider error
+  (`capfd`-based, mirroring `test_forum_security_stack.py`): a mocked 503 response's
+  `httpx.HTTPStatusError` would otherwise embed the key via the request URL's `?key=...` query
+  param, and `_call_gemini`'s wrap-into-a-fixed-message-`LlmError` behavior is what prevents that.
+  `test_llm_security_stack.py` proves the shared `llm-worker-fast`/`llm-worker-slow` both actually
+  run with `settings.testing = true` — enqueues a real `triage` job and a real `dedup_check` job
+  large enough to route to `llm-slow`, both directly against the standing shared services, and
+  asserts both complete with the exact deterministic mock values (a real network call could never
+  coincidentally produce them). Unlike ticket 4/5/7's own functional tests (all `llm-fast`, since
+  their fixtures are small), this is the only test that exercises the shared `llm-worker-slow`.
   `test_llm_scheduling.py` unit-tests `estimate_duration_ms`/`choose_queue`'s boundaries.
   `test_llm_scheduling_stack.py` proves queue isolation using its own dedicated Redis db and
   short-lived worker subprocesses (not the standing `llm-worker-fast`/`llm-worker-slow` services)
@@ -313,6 +332,12 @@ Startup is deliberately split into stages:
   `test_llm_scheduling_stack.py`'s pattern, since the real cost breakdown/user context are
   computed numbers/enums with no HTTP-reachable free-text channel for `TEST_FAILURE_MARKER`)
   proves a failed explanation job leaves the route job's `result` byte-for-byte unchanged.
+  `test_forum_abuse_stack.py` gained
+  `test_a_post_created_against_the_isolated_abuse_api_still_gets_triaged_by_the_shared_llm_worker`,
+  proving `LLM_QUEUE_BROKER_URL` really routes `abuse-api`'s enqueued LLM jobs to the shared
+  broker (a post created there must still reach a `'completed'` triage state) — verified with a
+  real negative control (reverted the compose env var, recreated the container, confirmed this
+  exact test fails with the job stuck unprocessed, then restored the fix).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
@@ -326,6 +351,13 @@ Startup is deliberately split into stages:
   the routing workflow tasks, `RouteWorkflowUser` creates/votes/comments on hazard reports and
   sends direct messages, and a `fixed_count = 1` `AbusiveForumUser` hammers forum post creation
   to model exactly one abusive account, all treating `429`/`503` as expected bounded outcomes.
+  `LlmQueueStressUser` (`fixed_count = 3`, near-zero `wait_time`) does nothing but create hazard
+  reports and submit route jobs back-to-back — the two request types that actually enqueue LLM
+  jobs — at a much higher relative rate than the general mix, specifically to drive `llm-fast`/
+  `llm-slow` queue depth under load. A real run (`-u 12 -r 4 -t 20s`, 289 requests, 0 failures)
+  followed by a direct `LLEN llm-fast`/`LLEN llm-slow` check against the shared broker (both `0`,
+  all 27 real `app.llm_jobs` rows created during the run `'completed'`) confirmed the queues
+  actually drain under load, not just avoid visibly failing.
 - `scripts/run_grading_validation.sh` is the complete isolated validation entry point, running one
   Compose test service per feature area (see `compose.test.yaml`, e.g. `forum-tests`,
   `forum-abuse-tests`) in sequence.
@@ -406,3 +438,14 @@ Startup is deliberately split into stages:
   bound with `max_priority: None`, and a slow job enqueued first genuinely finished before three
   fast jobs enqueued right after it. Do not "simplify" this back into one worker consuming both
   queues — that reintroduces a proven bug, not a cleanup.
+- Any API-like Compose service with its own isolated Redis db (`stress-api` on db 2, `abuse-api`
+  on db 1 — grep `compose.test.yaml` for `REDIS_URL: redis://redis:6379/` to find others) must set
+  `LLM_QUEUE_BROKER_URL` to the shared broker (`redis://redis:6379/0`) if it can create forum posts
+  or route jobs, the same way it must already set `ROUTE_QUEUE_BROKER_URL`. Without it,
+  `app/llm/service.py`'s `enqueue_llm_job` publishes onto that service's own isolated db, where
+  `llm-worker-fast`/`llm-worker-slow` never listen — the job sits `'queued'` forever, silently. This
+  was a real, live bug under `stress-api` (found while extending the Locust stress profile for
+  `docs/llm-feature-tickets.md` ticket 9) before being fixed and wired onto both known isolated-db
+  services; `test_forum_abuse_stack.py`'s
+  `test_a_post_created_against_the_isolated_abuse_api_still_gets_triaged_by_the_shared_llm_worker`
+  guards against it regressing.

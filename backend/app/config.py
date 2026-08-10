@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     llm_dedup_lookback_days: int = Field(default=14, ge=1, le=365)
     llm_dedup_radius_meters: float = Field(default=150.0, gt=0.0, le=5000.0)
     llm_dedup_candidate_limit: int = Field(default=20, ge=1, le=200)
+    llm_queue_broker_url: RedisDsn | None = None
+    llm_queue_publish_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
 
     @field_validator("database_url")
     @classmethod

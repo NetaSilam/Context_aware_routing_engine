@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 import httpx
 import pytest
@@ -205,3 +206,30 @@ def test_explain_route_rejects_a_response_missing_the_explanation_field(
 
     with pytest.raises(LlmError, match="invalid route explanation"):
         asyncio.run(explain_route({"final_cost": 1.0}, {}))
+
+
+# --- security: GEMINI_API_KEY must never leak (mirrors test_forum_security_stack.py's
+# capfd-based proof for forum/DM content) ---
+
+
+def test_gemini_api_key_never_appears_in_process_output_on_a_provider_error(
+    monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    # httpx embeds query params (the `?key=...` used to authenticate with Gemini) in its request
+    # URL, and that URL appears verbatim in the message of the httpx.HTTPStatusError that
+    # response.raise_for_status() raises on a non-2xx response — a real, plausible leak vector if
+    # anything downstream ever logged that error's message. _call_gemini wraps every httpx
+    # failure into a fixed-message LlmError before it can propagate; this proves that holds, not
+    # just that the code appears to on inspection.
+    secret_key = f"SECRET-GEMINI-KEY-{uuid.uuid4().hex}"
+    monkeypatch.setattr(
+        llm_client, "get_settings", lambda: _settings(testing=False, gemini_api_key=secret_key)
+    )
+    _mock_gemini_response(monkeypatch, {"error": "server exploded"}, status_code=503)
+
+    with pytest.raises(LlmError) as excinfo:
+        asyncio.run(classify_report("Water covering the road", "pothole", None))
+
+    assert secret_key not in str(excinfo.value)
+    captured = capfd.readouterr()
+    assert secret_key not in (captured.out + captured.err)

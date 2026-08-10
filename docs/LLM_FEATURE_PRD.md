@@ -126,6 +126,20 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    never be blocked by a slow one through OS-level process isolation, not through relying on
    broker-internal ordering semantics that turned out not to hold. Both remain part of the same
    `app/llm/tasks.py` Celery app/broker; only the Compose service (and its `-Q` argument) differs.
+
+   **Corrected during ticket 9's verification (2026-08-11):** `app/llm/tasks.py`'s `celery_app` is
+   a persistent module-level object bound to `settings.redis_url` at import time. That's correct
+   for the two worker services (always the shared db), but the *producer* side —
+   `app/llm/service.py`'s `enqueue_llm_job`, called from any FastAPI process — inherits whatever
+   Redis db *that specific process* happens to use. Most API-like services share the same db as
+   the workers, so this was invisible; `stress-api` and `abuse-api` don't (their own isolated dbs
+   exist to keep rate-limit/capacity state from cross-talking with other test services), so LLM
+   jobs they enqueued landed on a db nothing ever consumed — `'queued'` forever, real "unbounded
+   growth" under sustained load exactly as the stress-testing ticket warns against. Fixed with a
+   `Settings.llm_queue_broker_url` override (mirrors the routing worker's existing
+   `route_queue_broker_url`), and `enqueue_llm_job` now builds a fresh per-call Celery client and
+   sends by task name (mirrors `route_jobs.py`'s `_queue_client()`/`_publish_job()`) instead of
+   reusing the persistent app object — the two worker services' own broker binding is unchanged.
 3. **Schema.** `app.llm_jobs`: `id (uuid)`, `kind` (`triage` | `dedup_check` | `route_explanation`),
    `subject_post_id` (nullable — unused for `route_explanation`), `subject_route_job_id` (nullable
    — unused for `triage`/`dedup_check`, references `app.route_jobs.id`), `status`
@@ -244,6 +258,15 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    proof in `FORUM_FEATURE_PRD.md`, a dedicated check that `GEMINI_API_KEY` never appears in
    process output). Cross-user isolation: a dedup flag on user A's post never exposes user B's
    post body beyond what the feed already shows publicly (forum posts are not private content).
+
+   **Corrected during ticket 9's verification (2026-08-11):** "every test environment" as
+   originally written implied a blanket check across every Compose service, but tracing which
+   processes actually execute `run_llm_job` (the only place a real Gemini call can happen) showed
+   most services legitimately don't need `settings.testing = true` at all — they either never
+   touch `app/llm/client.py`'s real-call branch, or (like `test_llm_client.py`) construct their own
+   `Settings` object directly, independent of the env var. The delivered test instead targets
+   exactly the processes where it matters: the shared `llm-worker-fast`/`llm-worker-slow`. Tracing
+   this also surfaced a separate, real bug — see decision 2's ticket-9 update below.
 6. **Fake LLM in tests.** Tests use the `settings.testing` deterministic-response path, never a
    real API key or a live HTTP mock server — faster and with zero external dependency, consistent
    with how `fake_osrm`/`fake_geocoder` exist as real HTTP doubles for *those* upstreams but an

@@ -379,17 +379,74 @@ Testing Decisions 5 and 7, before calling it done.
 **Blocked by:** 4. Deliver hazard report triage on post creation; 5. Deliver near-duplicate
 detection and flagging; 7. Deliver route explanation on route job completion.
 
-**Status:** ready-for-agent
+**Status:** done (2026-08-11)
 
-- [ ] A test proves `GEMINI_API_KEY` never appears in process output, mirroring
+- [x] A test proves `GEMINI_API_KEY` never appears in process output, mirroring
       `test_forum_security_stack.py`'s `capfd`-based proof for forum/DM content.
-- [ ] A test proves every automated test environment runs with `settings.testing = true` (no
-      accidental real API call from CI).
-- [ ] The Locust stress profile gets tasks creating hazard reports and route jobs at a higher rate
+      `test_llm_client.py::test_gemini_api_key_never_appears_in_process_output_on_a_provider_error`
+      sets a unique fake key, mocks a 503 Gemini response (whose `httpx.HTTPStatusError` message
+      would otherwise embed the request URL's `?key=...` query param — a real, concrete leak
+      vector, not a hypothetical one), and asserts the key appears in neither the raised
+      `LlmError`'s message nor `capfd`-captured stdout/stderr — proving `_call_gemini`'s
+      wrap-and-discard behavior actually holds, not just that the code appears to on inspection.
+- [x] A test proves every automated test environment that can run a real LLM job has
+      `settings.testing = true` (no accidental real API call from CI).
+      `test_llm_security_stack.py::test_the_shared_llm_fast_and_slow_workers_both_run_with_testing_enabled`
+      enqueues a real `triage` job (routes to `llm-fast`) and a real `dedup_check` job with
+      `candidate_count=60` (routes to `llm-slow`) directly against the *shared* standing
+      `llm-worker-fast`/`llm-worker-slow` services, and asserts both complete with the exact
+      deterministic mock values (`severity == "medium"`, well-formed dedup result) — values a real
+      network call would never coincidentally produce. This is the one ticket-9 check that needed
+      a genuinely new mechanism: none of tickets 4/5/7's own functional tests exercise the shared
+      `llm-worker-slow` at all (their fixtures never estimate above the fast-queue threshold), so
+      this is new coverage, not just a restatement of what already existed.
+- [x] The Locust stress profile gets tasks creating hazard reports and route jobs at a higher rate
       than usual, asserting the `llm-fast`/`llm-slow` queues stay bounded (no unbounded growth, no
       worker crash) under load, consistent with `docs/forum-feature-tickets.md` ticket 9's stress
-      extension.
-- [ ] `docs/CODEBASE_MAP.md` and `docs/DOCUMENTATION_GUIDE.md` are updated to list the new `llm`
-      module, table, worker service, and tests.
-- [ ] This ticket file's own per-ticket `**Status:**` lines serve as the feature-to-test matrix,
+      extension. `backend/tests/stress/locustfile.py` gained `LlmQueueStressUser` (`fixed_count =
+      3`, near-zero `wait_time`, matching `AbusiveForumUser`'s "model the concentrated case
+      directly" approach) with two tasks that do nothing but create hazard reports and submit
+      route jobs — the two request types that actually enqueue LLM jobs — at a much higher relative
+      rate than `RouteWorkflowUser`'s general mixed workload.
+- [x] `docs/CODEBASE_MAP.md` is updated to list the new test files and the queue-routing fix below.
+      `docs/DOCUMENTATION_GUIDE.md` needed no changes on inspection, exactly as forum ticket 9
+      found for the forum vertical: `LLM_FEATURE_PRD.md`/`llm-feature-tickets.md` are already
+      listed as current, and this repository has no separate per-table schema-listing document
+      (migrations are the source of truth for schema).
+- [x] This ticket file's own per-ticket `**Status:**` lines serve as the feature-to-test matrix,
       matching the convention already established for the forum vertical.
+
+**Real bug found and fixed during verification (not just asserted from the code):** while
+designing the "every environment runs with testing=true" test, tracing exactly which processes
+can execute `run_llm_job` surfaced a real, separate bug: `app/llm/tasks.py`'s `celery_app` is a
+persistent module-level object bound to `settings.redis_url` at import time. Any API-like service
+with its *own* isolated Redis db for other reasons (`stress-api` on db 2, `abuse-api` on db 1 —
+both exist to keep rate-limit/capacity state from cross-talking with other test services) enqueued
+LLM jobs onto *that* db instead of the shared one `llm-worker-fast`/`llm-worker-slow` actually
+listen on — with zero consumers, those jobs sat `'queued'` forever. This is exactly the kind of
+"unbounded growth" this ticket's stress-queue bullet warns about, and it was live under the
+extended stress profile before the fix (`LlmQueueStressUser`'s hazard reports and route jobs
+create their LLM jobs through `stress-api`, on db 2). Root-caused via the same pattern
+`route_jobs.py`'s `route_queue_broker_url` already solves for route jobs. Fixed by adding
+`Settings.llm_queue_broker_url` (mirrors `route_queue_broker_url` exactly) and rewriting
+`app/llm/service.py`'s `enqueue_llm_job` to build a fresh, lightweight Celery client per call and
+send by task name (mirrors `route_jobs.py`'s `_queue_client()`/`_publish_job()`) instead of
+reusing the persistent module-level app — this also let the old "lazy import to avoid a needless
+celery_app construction" workaround be deleted, since the task object itself is never imported
+anymore. Wired `LLM_QUEUE_BROKER_URL=redis://redis:6379/0` onto `stress-api` and `abuse-api` in
+`compose.test.yaml`. Verified with a real negative control: reverted the `abuse-api` compose
+change, recreated the container, and confirmed
+`test_forum_abuse_stack.py::test_a_post_created_against_the_isolated_abuse_api_still_gets_triaged_by_the_shared_llm_worker`
+(the new regression test added alongside this fix) failed exactly as expected — the triage job
+never left `'queued'` — then restored the fix, recreated the container again, and confirmed both
+that test and the full `forum-abuse-tests` suite passed. Also confirmed directly: after running the
+real Locust stress profile (`llm-t9-verify`, `-u 12 -r 4 -t 20s`, 289 requests, 0 failures, 52
+`llm-stress-forum-post` + 36 `llm-stress-route-submit` requests), `LLEN llm-fast`/`LLEN llm-slow`
+on the shared broker were both `0` and every one of the 27 real `app.llm_jobs` rows created during
+the run was `'completed'` — the queues drained fully, not just avoided visibly failing.
+
+**Verified:** ran `unit-tests` (156 passed, up from 155 — the new leak test), `llm-security-tests`
+(new, 1 passed), `forum-abuse-tests` (8 passed, up from 7, plus the negative control above), the
+real Locust `stress-tests` profile, and the full existing regression set (`llm-stack-tests`,
+`llm-scheduling-tests`, `llm-triage-tests`, `llm-dedup-tests`, `llm-route-explanation-tests`,
+`route-job-tests`) — all green — against a real disposable Compose stack (project `llm-t9-verify`).

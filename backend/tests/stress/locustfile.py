@@ -183,3 +183,63 @@ class AbusiveForumUser(HttpUser):
                 response.success()
             else:
                 response.failure(f"unexpected abusive post status {response.status_code}")
+
+
+class LlmQueueStressUser(HttpUser):
+    """A handful of simulated accounts creating hazard reports and route jobs back-to-back, at a
+    higher relative rate than RouteWorkflowUser's general mixed workload — every hazard report
+    enqueues a triage job (which can itself cascade into a dedup_check job) and every completed
+    route job enqueues a route_explanation job, so this is the task class that most directly
+    drives llm-fast/llm-slow queue depth under load. Proves the queues stay bounded (drain back
+    down, no worker crash) rather than growing without limit as load is sustained."""
+
+    fixed_count = 3
+    wait_time = between(0.0, 0.05)
+
+    def on_start(self) -> None:
+        self.email = f"locust-llm-{uuid4()}@example.com"
+        payload = {
+            "email": self.email,
+            "password": "correct-password",
+            "driving_experience": "experienced",
+            "vehicle_type": "car",
+            "avoid_tolls": False,
+            "avoid_highways": False,
+        }
+        with self.client.post("/api/auth/signup", json=payload, name="llm-stress-signup", catch_response=True) as response:
+            if response.status_code in {201, 429, 503}:
+                response.success()
+            else:
+                response.failure(f"unexpected llm-stress signup status {response.status_code}")
+
+    @task(3)
+    def burst_create_hazard_report(self) -> None:
+        headers = {"Origin": _ORIGIN}
+        payload = {
+            "title": "LLM-queue stress report",
+            "body": "High-rate load-test report meant to enqueue a triage job; safe to ignore.",
+            "hazard_type": "crash",
+            "is_anonymous": False,
+            "longitude": 34.78,
+            "latitude": 32.07,
+        }
+        with self.client.post("/api/forum/posts", json=payload, headers=headers, name="llm-stress-forum-post", catch_response=True) as response:
+            if response.status_code in {201, 429, 503}:
+                response.success()
+            else:
+                response.failure(f"unexpected llm-stress post status {response.status_code}")
+
+    @task(2)
+    def burst_submit_route_job(self) -> None:
+        headers = {"Origin": _ORIGIN, "Idempotency-Key": str(uuid4())}
+        payload = {
+            "origin_longitude": 34.78,
+            "origin_latitude": 32.07,
+            "destination_longitude": 34.79,
+            "destination_latitude": 32.08,
+        }
+        with self.client.post("/api/route-jobs", json=payload, headers=headers, name="llm-stress-route-submit", catch_response=True) as response:
+            if response.status_code in {202, 429, 503}:
+                response.success()
+            else:
+                response.failure(f"unexpected llm-stress route status {response.status_code}")
