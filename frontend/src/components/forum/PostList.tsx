@@ -1,4 +1,4 @@
-import { HAZARD_TYPE_LABELS, HAZARD_TYPES } from "../../types/forum";
+import { HAZARD_TYPE_LABELS, HAZARD_TYPES, SEVERITY_LABELS } from "../../types/forum";
 import type { HazardType, PostSummary } from "../../types/forum";
 import VoteButtons from "./VoteButtons";
 
@@ -47,6 +47,14 @@ export default function PostList(props: PostListProps): JSX.Element {
                 : post.author_email}{" "}
               · {post.comment_count} comment{post.comment_count === 1 ? "" : "s"}
             </p>
+            {post.llm_severity ? (
+              <p className="forum-feed__severity">{SEVERITY_LABELS[post.llm_severity]}</p>
+            ) : null}
+            {post.duplicate_of_post_id ? (
+              <p className="forum-feed__duplicate">
+                Possible duplicate of report {post.duplicate_of_post_id}
+              </p>
+            ) : null}
             <VoteButtons
               upvoteCount={post.upvote_count}
               downvoteCount={post.downvote_count}

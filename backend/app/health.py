@@ -149,13 +149,19 @@ async def _queue_worker_readiness() -> dict[str, Any]:
             app.close()
 
     replies = await asyncio.to_thread(ping_workers)
-    if not replies:
+    # inspect().ping() broadcasts to every worker sharing this Redis broker, including the
+    # unrelated llm-worker (app/llm/tasks.py) — filter to the route worker's own hostname so an
+    # LLM-only outage can never be misreported as route-worker readiness, and vice versa.
+    route_replies = {
+        hostname: reply for hostname, reply in (replies or {}).items() if "llm-worker" not in hostname
+    }
+    if not route_replies:
         raise RuntimeError("no route worker responded to the Celery health ping")
     return {
         "status": "ready",
         "queue_depth": int(queue_depth),
         "queue_capacity": settings.unfinished_route_jobs_global,
-        "workers": len(replies),
+        "workers": len(route_replies),
     }
 
 

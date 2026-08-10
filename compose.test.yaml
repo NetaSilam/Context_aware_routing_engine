@@ -91,6 +91,241 @@ services:
       CELERY_TASK_SOFT_TIME_LIMIT_SECONDS: "8"
       CELERY_TASK_TIME_LIMIT_SECONDS: "10"
       ROUTE_WORKER_CONCURRENCY: "1"
+
+  llm-worker-fast:
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      fake-osrm:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      TESTING: "true"
+
+  llm-worker-slow:
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      fake-osrm:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      TESTING: "true"
+
+  llm-stack-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_llm_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      TESTING: "true"
+      RUN_LLM_INTEGRATION: "true"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      llm-worker-fast:
+        condition: service_started
+      llm-worker-slow:
+        condition: service_started
+
+  llm-scheduling-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_llm_scheduling_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      # A dedicated Redis db, deliberately not shared with the standing llm-worker service — this
+      # test spawns its own short-lived worker after every job is already queued, so no other
+      # consumer may race to grab a job first. See test_llm_scheduling_stack.py.
+      REDIS_URL: redis://redis:6379/3
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      TESTING: "true"
+      RUN_LLM_INTEGRATION: "true"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  llm-triage-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_llm_triage_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      LLM_TRIAGE_TEST_API_URL: http://api:8000
+      RUN_LLM_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+      llm-worker-fast:
+        condition: service_started
+
+  llm-security-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_llm_security_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      RUN_LLM_INTEGRATION: "true"
+    depends_on:
+      llm-worker-fast:
+        condition: service_started
+      llm-worker-slow:
+        condition: service_started
+
+  llm-route-explanation-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_llm_route_explanation_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      LLM_ROUTE_EXPLANATION_TEST_API_URL: http://api:8000
+      TESTING: "true"
+      RUN_LLM_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_started
+      llm-worker-fast:
+        condition: service_started
+
+  # A dedicated api + worker pair, not the shared api/llm-worker-fast: LLM_DEDUP_CANDIDATE_LIMIT
+  # is baked into a process's Settings at startup (get_settings() is process-lifetime-cached), so
+  # testing the candidate cap cheaply (a handful of posts, not >20) needs its own process with a
+  # tiny limit rather than exhausting the real default against the shared services.
+  llm-dedup-api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/4
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      AUTH_COOKIE_SECURE: "false"
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      FORUM_POST_USER_RATE_LIMIT: "20"
+      FORUM_POST_IP_RATE_LIMIT: "60"
+      LLM_DEDUP_CANDIDATE_LIMIT: "2"
+      TESTING: "true"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      fake-geocoder:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  llm-dedup-worker-fast:
+    build: ./backend
+    command: ["celery", "-A", "app.llm.tasks.celery_app", "worker", "-Q", "llm-fast", "--loglevel=INFO"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/4
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      LLM_DEDUP_CANDIDATE_LIMIT: "2"
+      TESTING: "true"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      fake-geocoder:
+        condition: service_healthy
+
+  llm-dedup-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_llm_dedup_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/4
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      OSRM_BASE_URL: http://fake-osrm:5000/normal/
+      EXPECTED_OSRM_GRAPH_VERSION: test-osrm-graph-v1
+      GEOCODER_BASE_URL: http://fake-geocoder:5001/search
+      GEOCODER_USER_AGENT: road-risk-integration-tests/1.0
+      LLM_DEDUP_TEST_API_URL: http://llm-dedup-api:8000
+      RUN_LLM_INTEGRATION: "true"
+    depends_on:
+      llm-dedup-api:
+        condition: service_healthy
+      llm-dedup-worker-fast:
+        condition: service_started
+
   frontend:
     ports: !reset []
     environment: []
@@ -145,6 +380,10 @@ services:
         condition: service_healthy
       worker:
         condition: service_started
+      llm-worker-fast:
+        condition: service_started
+      llm-worker-slow:
+        condition: service_started
 
   stress-api:
     build: ./backend
@@ -152,6 +391,7 @@ services:
       DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
       REDIS_URL: redis://redis:6379/2
       ROUTE_QUEUE_BROKER_URL: redis://redis:6379/0
+      LLM_QUEUE_BROKER_URL: redis://redis:6379/0
       FOUNDATION_DATA_VERSION: test-fixture-v1
       JWT_SECRET: test-only-secret-with-at-least-32-characters
       AUTH_ALLOWED_ORIGIN: http://frontend:8080
@@ -537,6 +777,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
       REDIS_URL: redis://redis:6379/1
+      LLM_QUEUE_BROKER_URL: redis://redis:6379/0
       FOUNDATION_DATA_VERSION: test-fixture-v1
       JWT_SECRET: test-only-secret-with-at-least-32-characters
       AUTH_ALLOWED_ORIGIN: http://frontend:8080

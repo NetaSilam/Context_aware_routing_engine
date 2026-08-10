@@ -9,6 +9,8 @@ export type HazardType =
 
 export type VoteValue = "up" | "down" | "none";
 
+export type Severity = "low" | "medium" | "high";
+
 export type MediaType = "image" | "video";
 
 export interface MediaItem {
@@ -34,6 +36,9 @@ export interface PostSummary {
   my_vote: VoteValue;
   created_at: string;
   updated_at: string;
+  llm_hazard_type_suggested: HazardType | null;
+  llm_severity: Severity | null;
+  duplicate_of_post_id: string | null;
 }
 
 export interface PostDetail extends PostSummary {
@@ -88,4 +93,10 @@ export const HAZARD_TYPE_LABELS: Record<HazardType, string> = {
 };
 
 export const HAZARD_TYPES = Object.keys(HAZARD_TYPE_LABELS) as HazardType[];
+
+export const SEVERITY_LABELS: Record<Severity, string> = {
+  low: "Low severity",
+  medium: "Medium severity",
+  high: "High severity",
+};
 

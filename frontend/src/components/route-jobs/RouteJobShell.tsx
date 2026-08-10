@@ -8,6 +8,7 @@ interface RouteJobShellProps {
   status: RouteJobShellStatus;
   error?: string;
   result?: RouteJobResult | null;
+  llmExplanation?: string | null;
 }
 
 const STATE_CONTENT: Record<RouteJobShellStatus, { heading: string; description: string }> = {
@@ -22,7 +23,7 @@ function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function RouteResult({ result }: { result: RouteJobResult }): JSX.Element {
+function RouteResult({ result, llmExplanation }: { result: RouteJobResult; llmExplanation?: string | null }): JSX.Element {
   const chosen = result.candidates.find((candidate) => candidate.candidate_index === result.chosen_index) ?? result.candidates[0];
   const center: [number, number] = chosen
     ? [chosen.geometry.coordinates[0][1], chosen.geometry.coordinates[0][0]]
@@ -33,6 +34,7 @@ function RouteResult({ result }: { result: RouteJobResult }): JSX.Element {
     <div className="route-result">
       {hasLowCoverage ? <p role="alert" className="error-banner">Some routes have incomplete historical corridor coverage. Their risk comparison is less reliable.</p> : null}
       {!result.risk_choice_available ? <p><strong>Only one route was available.</strong> No risk-aware choice between alternatives was possible.</p> : null}
+      {llmExplanation ? <p className="route-explanation">{llmExplanation}</p> : null}
       <div className="map-shell" aria-label="Route result map">
         <MapContainer center={center} zoom={12} className="corridor-map">
           <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
@@ -78,7 +80,7 @@ function RouteResult({ result }: { result: RouteJobResult }): JSX.Element {
   );
 }
 
-export default function RouteJobShell({ status, error, result }: RouteJobShellProps): JSX.Element {
+export default function RouteJobShell({ status, error, result, llmExplanation }: RouteJobShellProps): JSX.Element {
   const content = STATE_CONTENT[status];
   return (
     <section className="filters-panel" aria-label="Route job" data-route-job-state={status}>
@@ -87,7 +89,7 @@ export default function RouteJobShell({ status, error, result }: RouteJobShellPr
         <h2>{content.heading}</h2>
         <p>{status === "failed" && error ? error : content.description}</p>
       </div>
-      {status === "completed" && result ? <RouteResult result={result} /> : null}
+      {status === "completed" && result ? <RouteResult result={result} llmExplanation={llmExplanation} /> : null}
     </section>
   );
 }

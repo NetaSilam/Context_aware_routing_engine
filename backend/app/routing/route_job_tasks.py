@@ -18,6 +18,7 @@ from app.config import get_settings
 from app.operations import log_route_event, operations_metrics
 from app.abuse_protection import release_route_capacity_sync
 from app.corridor_matcher import RouteCandidateGeometry, match_route_candidates
+from app.llm.tasks import enqueue_route_explanation
 from app.routing.osrm_client import (
     OsrmClient,
     OsrmClientError,
@@ -236,6 +237,32 @@ def _calculate_result(job: tuple[Any, ...]) -> tuple[dict[str, Any], int, int]:
     return result, scoring.chosen_index, len(scoring.candidates)
 
 
+def _enqueue_route_explanation_if_possible(
+    job_id: str, result: dict[str, Any], chosen_index: int, snapshot: dict[str, Any]
+) -> None:
+    """Called immediately after the job's completed row is written. Fail-open by design (PRD
+    decision 6/11): a problem building or enqueueing the explanation job must never turn an
+    already-completed route job into a failure — the caller wraps this in a bare except."""
+    chosen = next(
+        candidate
+        for candidate in result["candidates"]
+        if candidate["candidate_index"] == chosen_index
+    )
+    enqueue_route_explanation(
+        route_job_id=job_id,
+        cost_breakdown={
+            "duration_seconds": chosen["duration_seconds"],
+            "historical_accident_density_per_km": chosen["historical_accident_density_per_km"],
+            "final_cost": chosen["final_cost"],
+        },
+        user_context={
+            "driving_experience": snapshot["driving_experience"],
+            "vehicle_type": snapshot["vehicle_type"],
+            "time_context": result["time_context"],
+        },
+    )
+
+
 class NoRouteFailure(Exception):
     pass
 
@@ -294,6 +321,10 @@ def execute_route_job(task: Any, job_id: str) -> None:
                 attempt=task.request.retries + 1,
                 duration_ms=(time.monotonic() - started) * 1000,
             )
+            try:
+                _enqueue_route_explanation_if_possible(job_id, result, chosen_index, snapshot)
+            except Exception:
+                pass
     except Retry:
         raise
     except NoRouteFailure:

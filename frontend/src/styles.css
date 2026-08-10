@@ -183,6 +183,15 @@ input {
   margin-top: 16px;
 }
 
+.route-explanation {
+  font-style: italic;
+  color: #324149;
+  background: rgba(13, 114, 136, 0.08);
+  border-radius: 14px;
+  padding: 12px 16px;
+  margin: 12px 0;
+}
+
 .route-candidate-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -593,6 +602,24 @@ input {
   color: #617178;
   font-size: 0.88rem;
   margin: 4px 0 8px;
+}
+
+.forum-feed__severity {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #8a5300;
+  background: rgba(255, 176, 32, 0.16);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin: 0 0 8px;
+}
+
+.forum-feed__duplicate {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #b03422;
+  margin: 0 0 8px;
 }
 
 .forum-vote-buttons {

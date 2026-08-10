@@ -173,7 +173,12 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
         disabled={routeStatus === "submitting" || routeStatus === "polling"}
         onSubmit={submitRoute}
       />
-      <RouteJobShell status={routeStatus} error={routeError ?? undefined} result={job?.result} />
+      <RouteJobShell
+        status={routeStatus}
+        error={routeError ?? undefined}
+        result={job?.result}
+        llmExplanation={job?.llm_explanation}
+      />
       <RouteHistoryPanel refreshKey={routeStatus === "completed" ? job?.id ?? null : null} onOpen={openHistory} onRunAgain={runAgain} />
     </main>
   );

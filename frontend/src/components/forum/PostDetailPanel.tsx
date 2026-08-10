@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-import { HAZARD_TYPE_LABELS } from "../../types/forum";
+import { HAZARD_TYPE_LABELS, SEVERITY_LABELS } from "../../types/forum";
 import type { CommentItem, PostDetail, VoteValue } from "../../types/forum";
 import MediaGallery from "./MediaGallery";
 import VoteButtons from "./VoteButtons";
@@ -57,6 +57,14 @@ export default function PostDetailPanel(props: PostDetailPanelProps): JSX.Elemen
       <p className="forum-feed__meta">
         {HAZARD_TYPE_LABELS[post.hazard_type]} · {authorLabel(post.is_anonymous, post.is_own, post.author_email)}
       </p>
+      {post.llm_severity ? (
+        <p className="forum-feed__severity">{SEVERITY_LABELS[post.llm_severity]}</p>
+      ) : null}
+      {post.duplicate_of_post_id ? (
+        <p className="forum-feed__duplicate">
+          Possible duplicate of report {post.duplicate_of_post_id}
+        </p>
+      ) : null}
       <p>{post.body}</p>
       <MediaGallery items={post.media} />
       <VoteButtons

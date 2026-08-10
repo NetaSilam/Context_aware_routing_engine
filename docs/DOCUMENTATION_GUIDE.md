@@ -10,7 +10,7 @@ win.
 2. [`CODEBASE_MAP.md`](CODEBASE_MAP.md) — current source-tree ownership and runtime flow.
 3. [`../data/README.md`](../data/README.md) — prepared data contents and exclusions.
 4. [`LOCAL_SETUP_AND_OPERATIONS.md`](LOCAL_SETUP_AND_OPERATIONS.md) — local startup, shutdown, reset, and test commands.
-5. [`ROUTING_FEATURE_PRD.md`](ROUTING_FEATURE_PRD.md) and [`FORUM_FEATURE_PRD.md`](FORUM_FEATURE_PRD.md) — the authoritative design record for each feature vertical.
+5. [`ROUTING_FEATURE_PRD.md`](ROUTING_FEATURE_PRD.md), [`FORUM_FEATURE_PRD.md`](FORUM_FEATURE_PRD.md), and [`LLM_FEATURE_PRD.md`](LLM_FEATURE_PRD.md) — the authoritative design record for each feature vertical.
 6. The focused evidence document for the feature you are changing.
 
 ## `docs/` inventory
@@ -24,6 +24,8 @@ win.
 | `route-risk-calculation-tickets.md` | Ordered, blocked-by ticket breakdown implementing the routing PRD | Current design record | Use to see routing implementation sequencing and per-ticket acceptance criteria |
 | `FORUM_FEATURE_PRD.md` | Problem statement, solution, user stories, implementation/testing decisions, and out-of-scope items for the forum/DM/notifications vertical | Current design record | Read before changing forum, messaging, or notification behavior |
 | `forum-feature-tickets.md` | Ordered, blocked-by ticket breakdown implementing the forum PRD | Current design record | Use to see forum implementation sequencing and per-ticket acceptance criteria |
+| `LLM_FEATURE_PRD.md` | Problem statement, solution, user stories, implementation/testing decisions, and out-of-scope items for the LLM hazard-triage/dedup vertical | Current design record | Read before changing the LLM job queue, worker, or classification behavior |
+| `llm-feature-tickets.md` | Ordered, blocked-by ticket breakdown implementing the LLM PRD | Current design record | Use to see LLM implementation sequencing and per-ticket acceptance criteria |
 | `assets/corridor-matcher-overlays/*.svg` | Visual overlays generated/reviewed for matcher benchmark cases | Supporting evidence | Keep with the benchmark; not standalone product documentation |
 
 ## What is necessary today
@@ -37,6 +39,7 @@ For normal onboarding and development, the necessary documentation set is:
 - `LOCAL_SETUP_AND_OPERATIONS.md` for day-to-day local operations
 - `ROUTING_FEATURE_PRD.md` and `route-risk-calculation-tickets.md` when working on routing
 - `FORUM_FEATURE_PRD.md` and `forum-feature-tickets.md` when working on the forum
+- `LLM_FEATURE_PRD.md` and `llm-feature-tickets.md` when working on the LLM integration
 
 ## Known documentation drift
 

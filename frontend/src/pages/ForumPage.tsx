@@ -89,6 +89,9 @@ export default function ForumPage(): JSX.Element {
         my_vote: created.my_vote,
         created_at: created.created_at,
         updated_at: created.updated_at,
+        llm_hazard_type_suggested: created.llm_hazard_type_suggested,
+        llm_severity: created.llm_severity,
+        duplicate_of_post_id: created.duplicate_of_post_id,
       },
       ...current,
     ]);

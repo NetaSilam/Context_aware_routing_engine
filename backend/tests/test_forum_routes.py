@@ -51,6 +51,9 @@ def _post_row(**overrides: object) -> dict:
         "upvote_count": 0,
         "downvote_count": 0,
         "comment_count": 0,
+        "llm_hazard_type_suggested": None,
+        "llm_severity": None,
+        "duplicate_of_post_id": None,
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
         "my_vote_value": None,
@@ -88,6 +91,26 @@ def test_serialize_post_omits_body_for_summary_rows_but_includes_it_when_present
 
     assert "body" not in _serialize_post(summary_row, viewer_id=1)
     assert _serialize_post(detail_row, viewer_id=1)["body"] == "Full report text."
+
+
+def test_serialize_post_includes_llm_classification_fields() -> None:
+    unclassified = _serialize_post(_post_row(), viewer_id=1)
+    assert unclassified["llm_hazard_type_suggested"] is None
+    assert unclassified["llm_severity"] is None
+    assert unclassified["duplicate_of_post_id"] is None
+
+    duplicate_id = uuid4()
+    classified = _serialize_post(
+        _post_row(
+            llm_hazard_type_suggested="flooding",
+            llm_severity="high",
+            duplicate_of_post_id=duplicate_id,
+        ),
+        viewer_id=1,
+    )
+    assert classified["llm_hazard_type_suggested"] == "flooding"
+    assert classified["llm_severity"] == "high"
+    assert classified["duplicate_of_post_id"] == duplicate_id
 
 
 def test_serialize_comment_hides_author_identity_when_anonymous() -> None:

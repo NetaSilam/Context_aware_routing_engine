@@ -82,14 +82,23 @@ Startup is deliberately split into stages:
 - `backend/app/data_routes.py` serves the canonical-network and accident-attribution explorer
   APIs. These queries are adapted to the artifacts actually present under `data/`.
 - `backend/app/routing/route_jobs.py` defines route-job request/response models and endpoints for
-  creation, polling, history, reopen, run-again, and deletion.
+  creation, polling, history, reopen, run-again, and deletion. `RouteJobStatus` (GET/history-entry)
+  and `RouteHistorySummary` (history list) both carry a nullable `llm_explanation: str | None`,
+  read out of `result.get("llm_explanation")` — `result` merges it in once the async
+  `route_explanation` job (see `app/llm/tasks.py` above) completes; `null` just means not
+  classified yet or the job failed (fail-open), never an error to the caller.
 - `backend/app/forum/routes.py` implements the hazard-reporting forum: post/comment CRUD,
   anonymity-filtered serialization, up/down/none voting with atomically maintained counters, and
   image/video media upload/retrieval for posts and comments (also serves direct-message media,
-  see below). Requests are ordinary synchronous FastAPI/PostgreSQL work (no Celery task), since
-  posting, commenting, voting, and uploading are bounded writes unlike OSRM/PostGIS route
-  scoring. `backend/app/forum/media_storage.py` owns media content-type/size classification and
-  the disk read/write helpers backing that volume.
+  see below). The request/response cycle itself is ordinary synchronous FastAPI/PostgreSQL work
+  (no Celery task in the request path), since posting, commenting, voting, and uploading are
+  bounded writes unlike OSRM/PostGIS route scoring — `create_post` additionally enqueues an
+  async LLM `triage` job (`app/llm/service.py`'s `create_llm_job`/`enqueue_llm_job`) after its own
+  transaction commits, but does not wait for it; the post is created and returned unclassified,
+  with `llm_hazard_type_suggested`/`llm_severity`/`duplicate_of_post_id` populated later once
+  `llm-worker-fast` processes the job (see `docs/LLM_FEATURE_PRD.md`). `backend/app/forum/
+  media_storage.py` owns media content-type/size classification and the disk read/write helpers
+  backing that volume.
 - `backend/app/messaging/routes.py` implements one-to-one direct messages: sending (with an
   optional single image/video attachment via the same `media_storage.py` helpers, in one
   multipart request rather than the forum's create-then-attach pattern), a paged conversation
@@ -105,11 +114,66 @@ Startup is deliberately split into stages:
   and the `GET /api/notifications/stream` Server-Sent Events endpoint. Cold seeding is designed
   in `docs/FORUM_FEATURE_PRD.md` but not yet implemented; see `docs/forum-feature-tickets.md` for
   status.
+- `backend/app/llm/tasks.py` defines a Celery app, physically separate from the routing worker's,
+  sharing the same Redis broker but never the same queue names (`llm-fast`/`llm-slow` vs. the
+  routing worker's default queue). Two Compose services consume it — `llm-worker-fast` (`-Q
+  llm-fast`) and `llm-worker-slow` (`-Q llm-slow`), deliberately two separate processes rather than
+  one worker listening to both: a real test proved Celery/Kombu's Redis transport does not drain
+  multiple `-Q` queues in listed-argument order, so only OS-level process isolation reliably keeps
+  a slow job from blocking fast ones (`docs/LLM_FEATURE_PRD.md` decision 2). `app/llm/service.py`'s
+  `create_llm_job`/`enqueue_llm_job` (mirroring `notifications/service.py`'s two-phase
+  create/publish split) compute each job's estimated duration and queue via
+  `app/llm/scheduling.py`. `enqueue_llm_job` builds a fresh, lightweight Celery client per call and
+  sends by task name (mirrors `app/routing/route_jobs.py`'s `_queue_client()`/`_publish_job()`)
+  rather than reusing `app.llm.tasks.celery_app`'s persistent module-level object — this matters
+  for real correctness: a caller with its *own* isolated Redis db for rate-limit/capacity state
+  (`stress-api`, `abuse-api` — see `LLM_QUEUE_BROKER_URL` in `compose.test.yaml`, mirroring the
+  existing `ROUTE_QUEUE_BROKER_URL`/`route_queue_broker_url` pattern) still needs its enqueued jobs
+  to land on the *shared* broker `llm-worker-fast`/`llm-worker-slow` actually listen on, not
+  silently orphaned on its own db forever (a real bug found and fixed during ticket 9's stress
+  verification — see `llm-feature-tickets.md` ticket 9's status for the negative-control proof).
+  See `docs/LLM_FEATURE_PRD.md` for the hazard-report triage/dedup and
+  route-explanation features this queue exists to serve, and `docs/llm-feature-tickets.md` for what
+  is implemented versus planned. Migration `0007_llm_jobs.py` adds `app.llm_jobs` and nullable
+  classification columns on `app.forum_posts` (`0008` relaxed its subject-presence constraint to
+  subject-*correctness* only, since a subject-less job is legitimate); `app.route_jobs` gets no new
+  column (see the PRD's decision on why the explanation is merged into the existing `result`
+  column instead).
+- `backend/app/llm/client.py` is the only module in the codebase that calls Google Gemini —
+  `classify_report`/`compare_for_duplicate`/`explain_route`, each gated by `settings.testing`
+  (real HTTP call via `httpx.AsyncClient` when false; a fixed or input-derived deterministic value
+  when true, with no `httpx` construction at all on that path). All three raise `LlmError` (or the
+  more specific `LlmNotConfiguredError`) on any provider failure, malformed response, or missing
+  `GEMINI_API_KEY` — never a raw `httpx`/parsing exception. It also exposes
+  `TEST_FAILURE_MARKER` — a magic substring that, when `settings.testing` is true and present in
+  the input text, makes the mock path raise instead of returning a canned result (mirrors
+  `route_job_tasks.py`'s `_test_crash_once` convention), used by fail-open integration tests.
+- `run_llm_job` (in `app/llm/tasks.py`) dispatches by `kind`: `triage` calls `classify_report` and,
+  on success, chains straight into `dedup_check` if the post has coordinates
+  (`_enqueue_dedup_check_if_applicable`) — a job created and enqueued from *inside* a Celery task,
+  not an API route, so it uses sync `psycopg` end to end rather than the async `create_llm_job`/
+  `enqueue_llm_job` in `app/llm/service.py` (which stays FastAPI-request-only). `dedup_check` calls
+  `compare_for_duplicate` against nearby same-hazard-type posts found via an on-the-fly
+  `ST_DWithin(..., ...::geography, radius)` search (no stored geometry column on `forum_posts`),
+  bounded by `llm_dedup_candidate_limit`, and sets `duplicate_of_post_id` on the first match.
+  `route_explanation` calls `explain_route` with the `cost_breakdown`/`user_context` passed in via
+  `run_llm_job`'s `extra_input` kwarg (real Celery task arguments, not re-queried — PRD decision
+  11), then merges the result into `route_jobs.result` via
+  `result || jsonb_build_object('llm_explanation', %s::text)` — the explicit `::text` cast matters:
+  without it Postgres cannot infer a type for a bare placeholder inside a polymorphic function like
+  `jsonb_build_object` (a real bug hit and fixed during ticket 7's verification). The ticket 3
+  placeholder (`_run_placeholder`) is gone — all three `Kind` values have real dispatch now.
+  `app/llm/tasks.py.enqueue_route_explanation` is the sync counterpart to `app/llm/service.py`'s
+  `create_llm_job`/`enqueue_llm_job`, called from `route_job_tasks.py` (a Celery task, so sync
+  `psycopg`, same reasoning as `_enqueue_dedup_check_if_applicable` above).
 
 ### Route execution
 
 - `backend/app/routing/route_job_tasks.py` defines the Celery worker task, retry/recovery behavior,
-  and the worker-side route-job pipeline.
+  and the worker-side route-job pipeline. After writing a job's `completed` row it calls
+  `_enqueue_route_explanation_if_possible` (wrapped in a bare `try/except: pass` — fail-open,
+  PRD decision 6/11), which imports `app.llm.tasks.enqueue_route_explanation` at module scope.
+  This is a one-way dependency (`routing` → `llm`); `app/llm/` never imports from `app/routing/`.
 - `backend/app/routing/osrm_client.py` validates the internal OSRM response and maps user
   motorway/toll preferences to supported OSRM exclusions.
 - `backend/app/corridor_matcher.py` implements the selected `sampled-nearest-v1` matcher: one
@@ -143,9 +207,18 @@ Startup is deliberately split into stages:
 
 - `frontend/src/App.tsx` loads the authenticated user and switches between the five pages.
 - `frontend/src/pages/PlanRoutePage.tsx` owns route submission, polling, preferences, and history.
+  It passes `job?.llm_explanation` (present on both the live-poll `RouteJob` and the "open saved
+  history" `RouteJob`, same type either way) straight through to `RouteJobShell`, which renders it
+  as an additive italic paragraph inside the completed result — never gating the map or numeric
+  breakdown, which render identically whether or not the explanation has arrived yet.
 - `frontend/src/pages/ForumPage.tsx` owns the hazard-reporting feed: filtering, pagination, post
   creation, and opening a post into `components/forum/PostDetailPanel.tsx` for comments and
-  voting.
+  voting. Both `components/forum/PostList.tsx` and `PostDetailPanel.tsx` also render the LLM
+  triage/dedup output — a severity pill (`SEVERITY_LABELS`, `types/forum.ts`) when `llm_severity`
+  is set, and a "possible duplicate of ..." line when `duplicate_of_post_id` is set — with neither
+  rendering while those fields are still `null` (job not yet completed). There is no live
+  push/poll for these fields; they surface on the feed's normal fetch points (initial load,
+  filter change, load more, closing a report's detail view), not while a screen sits idle.
 - `frontend/src/pages/InboxPage.tsx` owns direct messaging: the conversation list, starting a new
   conversation by recipient user ID, and opening a thread into
   `components/messages/ConversationThread.tsx` for sending text/media replies.
@@ -211,6 +284,60 @@ Startup is deliberately split into stages:
   in-process `TestClient(create_app())` run creates a post/comment/DM/media upload with
   distinctive marker strings and asserts none of them appear in `capfd`-captured process
   stdout/stderr).
+- `test_llm_stack.py` (real PostgreSQL/Redis/Celery integration) proves the `0007`/`0008` migration
+  shape (including the subject-matches-kind `CHECK` constraint) and that both real
+  `llm-worker-fast`/`llm-worker-slow` services respond to a Celery health ping. `test_health.py`
+  unit-tests `_queue_worker_readiness`'s hostname filter directly (fake `Celery`/`get_redis`, no
+  real infra needed) — a ping reply containing only an `llm-worker`-prefixed hostname must not
+  satisfy route-worker readiness, and a reply that also contains a genuine route-worker hostname
+  must. `test_llm_client.py` unit-tests `app/llm/client.py` entirely without real infra:
+  `httpx.MockTransport` stands in for Gemini on the real-call path (well-formed/malformed
+  responses, non-2xx status, missing fields), and the mocked (`settings.testing`) path is proven to
+  never construct `httpx.AsyncClient` at all by monkeypatching it to raise if called.
+  It also proves `GEMINI_API_KEY` never leaks into process output on a provider error
+  (`capfd`-based, mirroring `test_forum_security_stack.py`): a mocked 503 response's
+  `httpx.HTTPStatusError` would otherwise embed the key via the request URL's `?key=...` query
+  param, and `_call_gemini`'s wrap-into-a-fixed-message-`LlmError` behavior is what prevents that.
+  `test_llm_security_stack.py` proves the shared `llm-worker-fast`/`llm-worker-slow` both actually
+  run with `settings.testing = true` — enqueues a real `triage` job and a real `dedup_check` job
+  large enough to route to `llm-slow`, both directly against the standing shared services, and
+  asserts both complete with the exact deterministic mock values (a real network call could never
+  coincidentally produce them). Unlike ticket 4/5/7's own functional tests (all `llm-fast`, since
+  their fixtures are small), this is the only test that exercises the shared `llm-worker-slow`.
+  `test_llm_scheduling.py` unit-tests `estimate_duration_ms`/`choose_queue`'s boundaries.
+  `test_llm_scheduling_stack.py` proves queue isolation using its own dedicated Redis db and
+  short-lived worker subprocesses (not the standing `llm-worker-fast`/`llm-worker-slow` services)
+  so no other consumer can race to grab a job first — this is the test that originally disproved
+  the single-worker `-Q llm-fast,llm-slow` design. It was reworked during ticket 7: once every
+  `Kind` got real (mock-backed, effectively instant) dispatch, there was no longer a way to make
+  one job's real processing time exceed another's, so it now starts only the `llm-fast` worker,
+  asserts the fast jobs complete, and asserts the slow job is still exactly `'queued'` (proving no
+  consumer has touched it) before starting an `llm-slow` worker as a sanity check that the slow
+  job isn't broken, just deprioritized.
+  `test_llm_triage_stack.py` proves the real end-to-end triage integration against the running
+  `api` + `llm-worker-fast` services: creating a post leaves it unclassified in the immediate
+  response, polling `app.llm_jobs` (not a fixed sleep) shows the classification appear once the
+  job completes, and a report body carrying `app.llm.client.TEST_FAILURE_MARKER` produces a
+  `failed` job while the post stays fully visible in both the detail fetch and the feed —
+  proving PRD decision 6's fail-open guarantee empirically, not just by code inspection.
+  `test_llm_dedup_stack.py` runs against its own dedicated `llm-dedup-api`/`llm-dedup-worker-fast`
+  pair (not the shared services — `LLM_DEDUP_CANDIDATE_LIMIT` is baked into a process's `Settings`
+  at startup, and testing the cap cheaply needs a small override, not the real default of 20) and
+  proves a genuine near-duplicate gets flagged, a different hazard type or far-away location does
+  not, a post with no coordinates never gets a `dedup_check` job, and a dense cluster of candidates
+  is genuinely capped (`result.candidates_checked` equals the override, not the real total).
+  `test_llm_route_explanation_stack.py` proves the second real LLM feature: a real HTTP
+  submit-a-route-job-and-poll test shows `llm_explanation` eventually appears merged into
+  `result` without disturbing `chosen_index`/`candidates`, and a direct-function-call test (like
+  `test_llm_scheduling_stack.py`'s pattern, since the real cost breakdown/user context are
+  computed numbers/enums with no HTTP-reachable free-text channel for `TEST_FAILURE_MARKER`)
+  proves a failed explanation job leaves the route job's `result` byte-for-byte unchanged.
+  `test_forum_abuse_stack.py` gained
+  `test_a_post_created_against_the_isolated_abuse_api_still_gets_triaged_by_the_shared_llm_worker`,
+  proving `LLM_QUEUE_BROKER_URL` really routes `abuse-api`'s enqueued LLM jobs to the shared
+  broker (a post created there must still reach a `'completed'` triage state) — verified with a
+  real negative control (reverted the compose env var, recreated the container, confirmed this
+  exact test fails with the job stuck unprocessed, then restored the fix).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
@@ -224,6 +351,13 @@ Startup is deliberately split into stages:
   the routing workflow tasks, `RouteWorkflowUser` creates/votes/comments on hazard reports and
   sends direct messages, and a `fixed_count = 1` `AbusiveForumUser` hammers forum post creation
   to model exactly one abusive account, all treating `429`/`503` as expected bounded outcomes.
+  `LlmQueueStressUser` (`fixed_count = 3`, near-zero `wait_time`) does nothing but create hazard
+  reports and submit route jobs back-to-back — the two request types that actually enqueue LLM
+  jobs — at a much higher relative rate than the general mix, specifically to drive `llm-fast`/
+  `llm-slow` queue depth under load. A real run (`-u 12 -r 4 -t 20s`, 289 requests, 0 failures)
+  followed by a direct `LLEN llm-fast`/`LLEN llm-slow` check against the shared broker (both `0`,
+  all 27 real `app.llm_jobs` rows created during the run `'completed'`) confirmed the queues
+  actually drain under load, not just avoid visibly failing.
 - `scripts/run_grading_validation.sh` is the complete isolated validation entry point, running one
   Compose test service per feature area (see `compose.test.yaml`, e.g. `forum-tests`,
   `forum-abuse-tests`) in sequence.
@@ -283,3 +417,35 @@ Startup is deliberately split into stages:
   `app/routing/route_jobs.py`'s `log_route_event` already does — from a different module, and
   update `test_forum_security.py`'s watched-module logic deliberately rather than working around
   the check.
+- `app/llm/tasks.py`'s Celery app (`llm-worker-fast`/`llm-worker-slow`) shares the same Redis
+  broker as `app/routing/route_job_tasks.py`'s (`worker`) — deliberately, to avoid a second broker,
+  but this means `Celery.control.inspect().ping()` broadcasts to *all three* and cannot tell them
+  apart by itself. `health.py`'s `_queue_worker_readiness` filters ping replies by hostname
+  (excluding anything containing `"llm-worker"`) specifically so an LLM-worker outage can never be
+  misreported as route-worker readiness, or vice versa — this was a real bug caught while
+  verifying ticket 1 of `docs/llm-feature-tickets.md` against a real Compose stack (readiness
+  reported `200` with the routing `worker` never started, only an LLM worker running), not
+  something spotted by code review. Do not remove that filter, and if another Celery app/worker is
+  ever added on the same broker, give it a distinguishable hostname and extend the filter
+  deliberately rather than assuming a bare `ping()` reply implies the *specific* worker you meant.
+  The routing `worker` service is intentionally left without an explicit `hostname:` in
+  `compose.yaml` because it is scaled (`--scale worker=2` in `scripts/run_grading_validation.sh`)
+  — a fixed hostname on a scaled service would collide across replicas.
+- `llm-worker-fast` and `llm-worker-slow` are two separate Compose services/OS processes, each
+  bound to exactly one Celery queue (`-Q llm-fast` / `-Q llm-slow`) — not one worker listening to
+  `-Q llm-fast,llm-slow`. That was the original design (ticket 1); ticket 3's own integration test
+  proved it does not give fast jobs priority: `celery inspect active_queues` shows both queues
+  bound with `max_priority: None`, and a slow job enqueued first genuinely finished before three
+  fast jobs enqueued right after it. Do not "simplify" this back into one worker consuming both
+  queues — that reintroduces a proven bug, not a cleanup.
+- Any API-like Compose service with its own isolated Redis db (`stress-api` on db 2, `abuse-api`
+  on db 1 — grep `compose.test.yaml` for `REDIS_URL: redis://redis:6379/` to find others) must set
+  `LLM_QUEUE_BROKER_URL` to the shared broker (`redis://redis:6379/0`) if it can create forum posts
+  or route jobs, the same way it must already set `ROUTE_QUEUE_BROKER_URL`. Without it,
+  `app/llm/service.py`'s `enqueue_llm_job` publishes onto that service's own isolated db, where
+  `llm-worker-fast`/`llm-worker-slow` never listen — the job sits `'queued'` forever, silently. This
+  was a real, live bug under `stress-api` (found while extending the Locust stress profile for
+  `docs/llm-feature-tickets.md` ticket 9) before being fixed and wired onto both known isolated-db
+  services; `test_forum_abuse_stack.py`'s
+  `test_a_post_created_against_the_isolated_abuse_api_still_gets_triaged_by_the_shared_llm_worker`
+  guards against it regressing.

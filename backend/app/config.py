@@ -104,6 +104,19 @@ class Settings(BaseSettings):
     dm_protection_window_seconds: int = Field(default=60, ge=1, le=3600)
     dm_send_user_rate_limit: int = Field(default=20, ge=1, le=1000)
     dm_send_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
+    gemini_api_key: str | None = Field(default=None)
+    gemini_base_url: HttpUrl = Field(
+        default=HttpUrl("https://generativelanguage.googleapis.com")
+    )
+    gemini_model: str = Field(default="gemini-2.0-flash", min_length=1, max_length=100)
+    gemini_request_timeout_seconds: float = Field(default=10.0, gt=0.0, le=30.0)
+    llm_worker_concurrency: int = Field(default=2, ge=1, le=32)
+    llm_fast_queue_max_estimated_ms: int = Field(default=4000, ge=100, le=60_000)
+    llm_dedup_lookback_days: int = Field(default=14, ge=1, le=365)
+    llm_dedup_radius_meters: float = Field(default=150.0, gt=0.0, le=5000.0)
+    llm_dedup_candidate_limit: int = Field(default=20, ge=1, le=200)
+    llm_queue_broker_url: RedisDsn | None = None
+    llm_queue_publish_timeout_seconds: float = Field(default=2.0, gt=0, le=10)
 
     @field_validator("database_url")
     @classmethod
