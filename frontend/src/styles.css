@@ -657,3 +657,24 @@ input {
   border-radius: 12px;
   object-fit: cover;
 }
+
+.notification-indicator {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notification-indicator__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(176, 52, 34, 0.85);
+  color: #fff8f6;
+  font-size: 0.78rem;
+  font-weight: 600;
+}

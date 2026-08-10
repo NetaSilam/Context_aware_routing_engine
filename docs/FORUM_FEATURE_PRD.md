@@ -233,12 +233,24 @@ grading.
     anonymity-filtered) actor label, `created_at`, and nullable `read_at`.
 
 14. **Live delivery.** Notification creation publishes a small event to a Redis Pub/Sub channel
-    keyed per recipient (`forum-notifications:{user_id}`). `GET /api/notifications/stream` is a
-    Server-Sent Events endpoint that authenticates the caller, subscribes to that channel for the
-    lifetime of the connection, and forwards events as SSE messages. SSE was chosen over
-    WebSocket because delivery is one-directional (server to browser only); it avoids a
-    bidirectional protocol upgrade this feature does not need and works over the existing
-    HTTP/Nginx path without new infrastructure.
+    keyed per recipient (`forum-notifications:{user_id}`), from a dedicated `Redis.from_url(...)`
+    connection rather than the app-wide cached `get_redis()` singleton. `GET
+    /api/notifications/stream` is a Server-Sent Events endpoint that authenticates the caller,
+    subscribes to that channel for the lifetime of the connection, and forwards events as SSE
+    messages. SSE was chosen over WebSocket because delivery is one-directional (server to
+    browser only); it avoids a bidirectional protocol upgrade this feature does not need and
+    works over the existing HTTP/Nginx path without new infrastructure.
+
+    **Load-bearing fix, not optional cleanup:** `RequestSizeLimitMiddleware` (added for the
+    routing feature) drains and replays the ASGI `receive` channel for every request before
+    delegating to the app. Wrapping this long-lived `StreamingResponse` endpoint in that pattern
+    hung the *entire* server — every other concurrent request, on any connection — for as long as
+    one notification stream stayed open, reproduced with the size-check logic stripped out down
+    to the bare buffer-and-replay shape. Fixed by exempting `GET`/`HEAD` requests from that path
+    entirely in `request_bounds.py` (also the semantically correct scope, since no endpoint here
+    reads a body from a GET). Do not remove this exemption without re-verifying a live SSE
+    connection against a concurrent request on a real Docker Compose stack — the bug is invisible
+    in unit tests and in single-request manual checks.
 
 15. **Reconnection.** The frontend SSE client uses the browser's native `EventSource`
     auto-reconnect behavior and, on every (re)connect, first fetches the bounded unread
@@ -247,8 +259,11 @@ grading.
 
 16. **Notification history.** `GET /api/notifications` returns a bounded, offset-paginated,
     newest-first list for the authenticated user, mirroring the existing route-history pagination
-    convention. `POST /api/notifications/{id}/read` and a bulk "mark all read" endpoint update
-    `read_at`, filtered by ownership.
+    convention, and also includes the caller's total `unread_count` in the same response so the
+    frontend indicator never needs a second round trip. `POST /api/notifications/{id}/read` and
+    `POST /api/notifications/read-all` update `read_at`, filtered by ownership; marking an
+    already-read notification read again is a no-op 204, not a 404 — only a missing or
+    not-owned notification is a 404.
 
 17. **Direct messages.** `direct_messages` rows store `sender_user_id`, `recipient_user_id`,
     optional `body`, `created_at`, and nullable `read_at`. A conversation is derived from the pair
@@ -296,8 +311,12 @@ grading.
     authentication path is introduced.
 
 23. **Notification indicator.** The session header (`App.tsx`'s `app-session-bar`) gains a
-    live-updating unread-notification indicator fed by the SSE connection established once per
-    signed-in session, alongside the existing sign-out control.
+    live-updating unread-notification indicator (`NotificationIndicator`) fed by the SSE
+    connection established once per signed-in session, alongside the existing sign-out control.
+    Clicking it marks everything read (`POST /api/notifications/read-all`) and resets the badge
+    immediately (optimistic; a future reconnect's refetch reconciles it if the request failed).
+    Version 1 has no dropdown listing individual notifications — just the count — matching the
+    ticket's "live-updating unread-notification indicator" scope without expanding it.
 
 24. **Async boundary.** Forum/messaging/notification HTTP handlers use the existing asynchronous
     PostgreSQL/Redis access pattern (`db.py`, `redis_client.py`). No Celery task is required for

@@ -16,6 +16,8 @@ from app.config import get_settings
 from app.db import get_engine
 from app.forum.media_storage import classify_and_validate_media, write_media_file
 from app.forum.routes import MediaItem
+from app.notifications.service import create_notification, publish_notification
+from app.redis_client import get_redis
 from app.request_bounds import reject_unexpected_query_parameters
 
 router = APIRouter(prefix="/api/messages", tags=["messages"])
@@ -151,6 +153,7 @@ async def send_message(
     )
 
     message_id = uuid4()
+    notification = None
     try:
         async with get_engine().begin() as connection:
             recipient = (
@@ -203,8 +206,20 @@ async def send_message(
                         },
                     )
                 ).mappings().one()
+            notification = await create_notification(
+                connection,
+                recipient_user_id=recipient_user_id,
+                actor_user_id=int(user["id"]),
+                kind="new_dm",
+                payload={
+                    "message_id": str(message_id),
+                    "sender_user_id": int(user["id"]),
+                    "sender_email": user["email"],
+                },
+            )
     except SQLAlchemyError as exc:
         raise _service_unavailable("The messaging service is temporarily unavailable.") from exc
+    await publish_notification(get_redis(), notification)
     return _serialize_message(
         row, sender_email=user["email"], recipient_email=recipient["email"], media=media_row
     )

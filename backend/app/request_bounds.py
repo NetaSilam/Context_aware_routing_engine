@@ -62,6 +62,21 @@ class RequestSizeLimitMiddleware:
                 )(scope, receive, send)
                 return
 
+        if scope.get("method") in ("GET", "HEAD"):
+            # No endpoint in this API reads a body from a GET/HEAD request, so there is
+            # nothing to size-check here. Skip straight to the app with the original
+            # receive callable rather than draining and replaying it: doing that in front
+            # of a long-lived StreamingResponse (the notification SSE endpoint) hung the
+            # entire server for every other concurrent request for as long as that one
+            # connection stayed open, even though the buffering logic itself never ran
+            # again after the first message. Root-caused empirically (bare FastAPI apps
+            # with a StreamingResponse are unaffected without this middleware; adding this
+            # exact receive-buffer-and-replay pattern in front of one reproduces the hang
+            # even with the size-check logic stripped out), not from a documented uvicorn
+            # issue — treat this exemption as load-bearing, not optional cleanup.
+            await self.app(scope, receive, send)
+            return
+
         messages = []
         received_bytes = 0
         while True:

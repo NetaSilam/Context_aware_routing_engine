@@ -167,24 +167,50 @@ polling, per PRD decisions 13-16.
 
 **Blocked by:** 2. Deliver the core hazard-report feed; 4. Deliver direct messaging.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/app/notifications/`, `frontend/src/components/notifications/NotificationIndicator.tsx`)
 
-- [ ] A notification row is created for: a new DM to a recipient, a new upvote/downvote on a
+- [x] A notification row is created for: a new DM to a recipient, a new upvote/downvote on a
       user's post/comment, and a new comment on a user's post; creation is anonymity-filtered
-      before storage of the actor label.
-- [ ] Notification creation publishes a small event to a per-recipient Redis Pub/Sub channel in
-      the same request that writes the triggering row.
-- [ ] `GET /api/notifications/stream` authenticates the caller, subscribes to their channel, and
+      before storage of the actor label (`create_notification` also unconditionally skips
+      self-notifications — voting on or commenting on your own content never notifies you).
+      Clearing a vote back to `none` does not notify (only a genuine new up/down vote does).
+- [x] Notification creation publishes a small event to a per-recipient Redis Pub/Sub channel,
+      but *after* the transaction that wrote the row commits (the route handler calls
+      `publish_notification` once its `async with get_engine().begin()` block has exited), so a
+      subscriber that reacts by calling `GET /api/notifications` can never race ahead of the row
+      it's reacting to.
+- [x] `GET /api/notifications/stream` authenticates the caller, subscribes to their channel, and
       forwards events as Server-Sent Events for the connection's lifetime.
-- [ ] `GET /api/notifications` returns a bounded, offset-paginated, newest-first list; `POST
-      /api/notifications/{id}/read` and a bulk mark-all-read endpoint update `read_at`, filtered
-      by ownership.
-- [ ] The frontend SSE client re-fetches the unread list on every (re)connect so a dropped
-      connection cannot silently lose notifications generated while disconnected.
-- [ ] Integration tests assert Pub/Sub publish-on-write and authenticated subscribe/forward
-      behavior without requiring a real browser `EventSource`.
-- [ ] Frontend tests cover the reconnect-then-fetch-unread-list behavior with a mocked
-      `EventSource`.
+- [x] `GET /api/notifications` returns a bounded, offset-paginated, newest-first list (including
+      `unread_count` in the same response, so the frontend doesn't need a second call); `POST
+      /api/notifications/{id}/read` and `POST /api/notifications/read-all` update `read_at`,
+      filtered by ownership.
+- [x] The frontend SSE client (`NotificationIndicator`) re-fetches the unread count on every
+      `EventSource.onopen` firing — which the browser triggers on the initial connect *and* on
+      every automatic reconnect — so a dropped connection cannot silently lose notifications
+      generated while disconnected.
+- [x] Integration tests (`test_notifications_stack.py`, 8 tests) assert notification creation,
+      anonymity filtering, self-vote/clear-vote suppression, read-state transitions, and
+      ownership scoping; one test opens a real SSE connection with `httpx.Client.stream(...)`
+      and asserts a live event arrives after another client triggers it — verified via a live
+      Docker Compose run, not a mocked transport. Frontend tests
+      (`NotificationIndicator.test.tsx`, 5 tests) cover the fetch-on-open, increment-on-message,
+      refetch-on-reconnect, mark-all-read, and unmount-closes-connection behavior with a mocked
+      `EventSource` class (jsdom has no native `EventSource`).
+- [x] **Critical bug found and fixed during verification, not just written and assumed correct:**
+      the project's existing `RequestSizeLimitMiddleware` (added for the routing feature, reused
+      here) drains and replays the ASGI `receive` channel for every request. Wrapping a
+      long-lived `StreamingResponse` (this SSE endpoint) in that pattern hung the *entire* server
+      — every other concurrent request on any connection, including `/health/live` — for as long
+      as one notification stream stayed open. Root-caused empirically through a sequence of
+      isolated repros (bare `redis.asyncio` pubsub alongside a heartbeat: fine; bare FastAPI
+      `StreamingResponse` under real uvicorn: fine; the same bare app with only the minimal
+      receive-buffer-and-replay middleware pattern added, no size-check logic at all: reproduces
+      the hang). Fixed by exempting `GET`/`HEAD` requests from the buffer-and-replay path
+      entirely in `request_bounds.py` — semantically correct anyway, since no endpoint in this
+      API reads a body from a GET. This also means the media-upload prefix/suffix exemptions
+      added in tickets 3-4 apply only to non-GET requests now, which was already the only case
+      that mattered (uploads are POSTs).
 
 ## 6. Add forum/messaging rate limiting and abuse protection
 

@@ -20,8 +20,18 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+class StubEventSource {
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  close(): void {
+    // no-op; the notification indicator only needs a connection to open and close cleanly
+  }
+}
+
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(profile)));
+  vi.stubGlobal("EventSource", StubEventSource);
 });
 
 afterEach(() => {

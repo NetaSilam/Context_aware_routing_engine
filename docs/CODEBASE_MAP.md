@@ -96,8 +96,14 @@ Startup is deliberately split into stages:
   view with read-receipt marking, and a conversation-list summary. A DM's media is retrieved
   through the *same* `GET /api/forum/media/{media_id}` endpoint as forum media (ownership-checked
   against `sender_user_id`/`recipient_user_id` instead of post/comment authorship) rather than a
-  separate route. Live notifications and cold seeding are designed in
-  `docs/FORUM_FEATURE_PRD.md` but not yet implemented; see `docs/forum-feature-tickets.md` for
+  separate route.
+- `backend/app/notifications/service.py` owns notification-row creation (skips self-notifications;
+  never fires when a vote is cleared, only when a new up/down vote is set) and Redis Pub/Sub
+  publishing, called from the forum vote/comment endpoints and the DM send endpoint after their
+  writing transaction has committed. `backend/app/notifications/routes.py` implements the paged
+  `GET /api/notifications` list (with `unread_count`), `POST .../{id}/read` and `.../read-all`,
+  and the `GET /api/notifications/stream` Server-Sent Events endpoint. Cold seeding is designed
+  in `docs/FORUM_FEATURE_PRD.md` but not yet implemented; see `docs/forum-feature-tickets.md` for
   status.
 
 ### Route execution
@@ -148,11 +154,14 @@ Startup is deliberately split into stages:
   (reused by `components/messages/` for message attachments).
 - `frontend/src/components/messages/` contains the conversation list/start-conversation form and
   the conversation thread/compose form.
+- `frontend/src/components/notifications/NotificationIndicator.tsx` is the session-header
+  unread-count badge: opens one `EventSource` per signed-in session, refetches the unread count
+  on every open/reconnect, increments on each live event, and marks everything read on click.
 - `frontend/src/components/auth/` contains the signup/login/profile UI.
 - `frontend/src/components/canonical-network/` and
   `frontend/src/components/accident-attribution/` contain map filters and detail panels.
 - `frontend/src/api/` contains typed client calls and response tests for auth, geocoding, explorer
-  data, route jobs, the forum, and direct messages.
+  data, route jobs, the forum, direct messages, and notifications.
 - `frontend/src/lib/applyVote.ts` is the pure client-side vote-delta helper shared by the feed and
   post detail views, so an optimistic vote click never needs a full refetch.
 - `frontend/src/types/` contains shared TypeScript response/domain types.
@@ -177,17 +186,20 @@ Startup is deliberately split into stages:
 ## Tests and verification
 
 - Backend unit and integration tests are under `backend/tests/`, including
-  `test_forum_routes.py`, `test_forum_media.py`, and `test_messages_routes.py` (pure
-  vote/serialization/media-validation logic, no database) and
-  `test_forum_stack.py`/`test_forum_media_stack.py`/`test_messages_stack.py` (real
-  PostgreSQL/Redis/disk integration: CRUD, ownership, anonymity leak checks, vote counters, the
-  dashboard aggregate, media upload/retrieval/size/type/ownership/count-cap behavior, and DM
-  sending/pagination/read-receipts/cross-user isolation).
+  `test_forum_routes.py`, `test_forum_media.py`, `test_messages_routes.py`, and
+  `test_notifications_service.py` (pure vote/serialization/media-validation logic, no database)
+  and `test_forum_stack.py`/`test_forum_media_stack.py`/`test_messages_stack.py`/
+  `test_notifications_stack.py` (real PostgreSQL/Redis/disk integration: CRUD, ownership,
+  anonymity leak checks, vote counters, the dashboard aggregate, media
+  upload/retrieval/size/type/ownership/count-cap behavior, DM sending/pagination/
+  read-receipts/cross-user isolation, and notification creation/anonymity/read-state — including
+  one test that opens a real Server-Sent Events connection and asserts a live event arrives).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
   behavior, including `frontend/src/pages/ForumPage.test.tsx`, `frontend/src/pages/
-  InboxPage.test.tsx`, `frontend/src/api/messages.test.ts`, and `frontend/src/lib/
+  InboxPage.test.tsx`, `frontend/src/components/notifications/NotificationIndicator.test.tsx`
+  (mocked `EventSource`), `frontend/src/api/messages.test.ts`, and `frontend/src/lib/
   applyVote.test.ts`.
 - `frontend/e2e/route-journey.mjs` covers the browser route journey.
 - `backend/tests/stress/locustfile.py` covers concurrent and abusive request behavior.
@@ -210,6 +222,8 @@ Startup is deliberately split into stages:
 | Change explorer data | `backend/app/data_routes.py`, frontend explorer API/types/pages, fixture/data docs |
 | Change the forum (posts/comments/votes/media) | `backend/app/forum/routes.py`, `backend/app/forum/media_storage.py` for uploads, an Alembic migration, `frontend/src/pages/ForumPage.tsx` and `components/forum/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` for design intent and remaining scope |
 | Change direct messaging | `backend/app/messaging/routes.py` (reuses `backend/app/forum/media_storage.py`), `frontend/src/pages/InboxPage.tsx` and `components/messages/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` |
+| Change live notifications | `backend/app/notifications/service.py` (create/publish) and `routes.py` (list/read/SSE stream), the `create_notification` call sites in `forum/routes.py` and `messaging/routes.py`, `frontend/src/components/notifications/NotificationIndicator.tsx` |
+| Add another long-lived streaming endpoint | Read `request_bounds.py`'s `GET`/`HEAD` exemption comment first — wrapping a `StreamingResponse` in the body-buffer-and-replay middleware pattern hangs the whole server; verify any new streaming endpoint against a concurrent request on a real Compose stack, not just unit tests |
 
 ## Important boundaries
 
@@ -231,3 +245,10 @@ Startup is deliberately split into stages:
   `(caller, other_user_id)`, and every DM query/mutation is scoped that way. Do not add an
   endpoint that accepts a bare message or conversation ID without also filtering by the
   authenticated caller as sender or recipient.
+- `RequestSizeLimitMiddleware` skips its receive-buffer-and-replay logic entirely for GET/HEAD
+  requests (see `request_bounds.py`). This is not a minor optimization: applying that pattern to
+  a long-lived `StreamingResponse` (as the notification SSE endpoint is) hangs the whole server
+  for every other concurrent request, not just the streaming one. Any new streaming/long-lived
+  endpoint must stay a GET (or otherwise stay excluded from that path), and must be verified
+  against a concurrent request on a real Compose stack before being considered done — this class
+  of bug does not show up in unit tests or in a single manual request.

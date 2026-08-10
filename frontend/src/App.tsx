@@ -3,6 +3,7 @@ import React from "react";
 import { getMe, logout } from "./api/auth";
 import AuthPanel from "./components/auth/AuthPanel";
 import PageSwitcher, { type AppPageId } from "./components/navigation/PageSwitcher";
+import NotificationIndicator from "./components/notifications/NotificationIndicator";
 import AccidentAttributionPage from "./pages/AccidentAttributionPage";
 import CanonicalNetworkPage from "./pages/CanonicalNetworkPage";
 import ForumPage from "./pages/ForumPage";
@@ -46,6 +47,7 @@ export default function App(props: AppProps): JSX.Element {
     <>
       <header className="app-session-bar">
         <span>Signed in as {user.email}</span>
+        <NotificationIndicator />
         <button type="button" onClick={() => void logout().then(() => setUser(null))}>Sign out</button>
       </header>
       <PageSwitcher activePage={activePage} onPageChange={setActivePage} />

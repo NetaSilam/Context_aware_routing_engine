@@ -16,6 +16,8 @@ from app.auth import get_current_user, require_trusted_origin
 from app.config import get_settings
 from app.db import get_engine
 from app.forum.media_storage import classify_and_validate_media, read_media_file, write_media_file
+from app.notifications.service import create_notification, publish_notification
+from app.redis_client import get_redis
 from app.request_bounds import reject_unexpected_query_parameters
 
 router = APIRouter(prefix="/api/forum", tags=["forum"])
@@ -473,9 +475,10 @@ async def create_comment(
         ip_limit=settings.forum_comment_ip_rate_limit,
     )
     comment_id = uuid4()
+    notification = None
     try:
         async with get_engine().begin() as connection:
-            await _get_active_post_or_404(connection, post_id)
+            post = await _get_active_post_or_404(connection, post_id)
             row = (
                 await connection.execute(
                     text(
@@ -501,8 +504,20 @@ async def create_comment(
                 ),
                 {"id": post_id},
             )
+            notification = await create_notification(
+                connection,
+                recipient_user_id=int(post["author_user_id"]),
+                actor_user_id=int(user["id"]),
+                kind="new_comment",
+                payload={
+                    "post_id": str(post_id),
+                    "comment_id": str(comment_id),
+                    "actor_label": None if payload.is_anonymous else user["email"],
+                },
+            )
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
+    await publish_notification(get_redis(), notification)
     return _serialize_comment(
         {**row, "author_email": user["email"], "my_vote_value": None}, int(user["id"])
     )
@@ -645,7 +660,9 @@ async def _apply_vote(
     target_id: UUID,
     user_id: int,
     requested: VoteValue,
-) -> None:
+) -> bool:
+    """Apply the vote and return whether it newly set an up/down vote (not clearing one), so
+    callers can decide whether this is worth a notification."""
     table = "forum_posts" if target_type == "post" else "forum_comments"
     # A row-level lock only works once a forum_votes row exists. An advisory lock also
     # serializes the first vote from the same user on the same target, so two concurrent
@@ -704,6 +721,7 @@ async def _apply_vote(
             ),
             {"upvote_delta": upvote_delta, "downvote_delta": downvote_delta, "id": target_id},
         )
+    return new_value != 0 and new_value != existing
 
 
 @router.put("/posts/{post_id}/vote", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_trusted_origin)])
@@ -721,18 +739,28 @@ async def vote_on_post(
         user_limit=settings.forum_vote_user_rate_limit,
         ip_limit=settings.forum_vote_ip_rate_limit,
     )
+    notification = None
     try:
         async with get_engine().begin() as connection:
-            await _get_active_post_or_404(connection, post_id)
-            await _apply_vote(
+            post = await _get_active_post_or_404(connection, post_id)
+            voted = await _apply_vote(
                 connection,
                 target_type="post",
                 target_id=post_id,
                 user_id=int(user["id"]),
                 requested=payload.value,
             )
+            if voted:
+                notification = await create_notification(
+                    connection,
+                    recipient_user_id=int(post["author_user_id"]),
+                    actor_user_id=int(user["id"]),
+                    kind="new_vote",
+                    payload={"target_type": "post", "post_id": str(post_id), "value": payload.value},
+                )
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
+    await publish_notification(get_redis(), notification)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -751,25 +779,42 @@ async def vote_on_comment(
         user_limit=settings.forum_vote_user_rate_limit,
         ip_limit=settings.forum_vote_ip_rate_limit,
     )
+    notification = None
     try:
         async with get_engine().begin() as connection:
             comment_row = (
                 await connection.execute(
-                    text("SELECT id FROM app.forum_comments WHERE id = :id AND status = 'active'"),
+                    text(
+                        "SELECT id, author_user_id, post_id FROM app.forum_comments WHERE id = :id AND status = 'active'"
+                    ),
                     {"id": comment_id},
                 )
             ).mappings().first()
             if comment_row is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Comment not found.")
-            await _apply_vote(
+            voted = await _apply_vote(
                 connection,
                 target_type="comment",
                 target_id=comment_id,
                 user_id=int(user["id"]),
                 requested=payload.value,
             )
+            if voted:
+                notification = await create_notification(
+                    connection,
+                    recipient_user_id=int(comment_row["author_user_id"]),
+                    actor_user_id=int(user["id"]),
+                    kind="new_vote",
+                    payload={
+                        "target_type": "comment",
+                        "comment_id": str(comment_id),
+                        "post_id": str(comment_row["post_id"]),
+                        "value": payload.value,
+                    },
+                )
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
+    await publish_notification(get_redis(), notification)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
