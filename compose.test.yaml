@@ -293,6 +293,81 @@ services:
       auth-unavailable-api:
         condition: service_healthy
 
+  forum-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_forum_stack.py", "tests/test_forum_media_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      FORUM_TEST_API_URL: http://api:8000
+      RUN_FORUM_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  forum-security-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_forum_security_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      RUN_FORUM_SECURITY_INTEGRATION: "true"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  forum-seed-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_forum_seed_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      RUN_FORUM_SEED_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  messages-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_messages_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      MESSAGES_TEST_API_URL: http://api:8000
+      RUN_MESSAGES_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  notifications-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_notifications_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      NOTIFICATIONS_TEST_API_URL: http://api:8000
+      RUN_NOTIFICATIONS_INTEGRATION: "true"
+    depends_on:
+      api:
+        condition: service_healthy
+
   fake-osrm:
     build: ./backend
     command: ["uvicorn", "tests.fake_osrm.app:app", "--host", "0.0.0.0", "--port", "5000"]
@@ -480,6 +555,14 @@ services:
       UNFINISHED_ROUTE_JOBS_GLOBAL: "3"
       REQUEST_BODY_MAX_BYTES: "1024"
       REQUEST_QUERY_MAX_BYTES: "128"
+      FORUM_POST_USER_RATE_LIMIT: "2"
+      FORUM_POST_IP_RATE_LIMIT: "20"
+      FORUM_COMMENT_USER_RATE_LIMIT: "2"
+      FORUM_COMMENT_IP_RATE_LIMIT: "20"
+      FORUM_VOTE_USER_RATE_LIMIT: "2"
+      FORUM_VOTE_IP_RATE_LIMIT: "20"
+      DM_SEND_USER_RATE_LIMIT: "2"
+      DM_SEND_IP_RATE_LIMIT: "20"
     depends_on:
       initialize:
         condition: service_completed_successfully
@@ -522,6 +605,24 @@ services:
       UNFINISHED_ROUTE_JOBS_GLOBAL: "3"
       REQUEST_BODY_MAX_BYTES: "1024"
       REQUEST_QUERY_MAX_BYTES: "128"
+    depends_on:
+      abuse-api:
+        condition: service_healthy
+      geocoding-unavailable-api:
+        condition: service_healthy
+
+  forum-abuse-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_forum_abuse_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/1
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      FORUM_ABUSE_TEST_API_URL: http://abuse-api:8000
+      FORUM_ABUSE_UNAVAILABLE_API_URL: http://geocoding-unavailable-api:8000
+      RUN_FORUM_ABUSE_INTEGRATION: "true"
     depends_on:
       abuse-api:
         condition: service_healthy

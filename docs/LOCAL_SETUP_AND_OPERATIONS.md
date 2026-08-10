@@ -30,8 +30,10 @@ docker compose --env-file .env.real ps
 ```
 
 Open [http://localhost:8080](http://localhost:8080). On the first run, the initializer loads
-the four files, verifies the checksum and row counts, and builds the active risk version.
-Later runs reuse and revalidate the existing database.
+the four files, verifies the checksum and row counts, builds the active risk version, and
+cold-seeds forum demo data (6 seed accounts, 9 historical hazard reports, comments, and votes).
+Later runs reuse and revalidate the existing database; re-seeding is idempotent and never
+duplicates content.
 
 Check internal readiness:
 
