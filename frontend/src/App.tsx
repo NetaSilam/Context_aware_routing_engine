@@ -6,6 +6,7 @@ import PageSwitcher, { type AppPageId } from "./components/navigation/PageSwitch
 import AccidentAttributionPage from "./pages/AccidentAttributionPage";
 import CanonicalNetworkPage from "./pages/CanonicalNetworkPage";
 import ForumPage from "./pages/ForumPage";
+import InboxPage from "./pages/InboxPage";
 import PlanRoutePage from "./pages/PlanRoutePage";
 import type { UserProfile } from "./types/auth";
 
@@ -36,6 +37,7 @@ export default function App(props: AppProps): JSX.Element {
   const pages: Record<AppPageId, JSX.Element> = {
     "plan-route": props.pages?.["plan-route"] ?? <PlanRoutePage user={user} onProfileUpdated={setUser} />,
     forum: props.pages?.forum ?? <ForumPage />,
+    inbox: props.pages?.inbox ?? <InboxPage user={user} />,
     "canonical-network": props.pages?.["canonical-network"] ?? <CanonicalNetworkPage />,
     "accident-attribution": props.pages?.["accident-attribution"] ?? <AccidentAttributionPage />,
   };

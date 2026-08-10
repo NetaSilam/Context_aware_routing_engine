@@ -16,21 +16,25 @@ class RequestSizeLimitMiddleware:
         max_query_bytes: int,
         media_max_body_bytes: int | None = None,
         media_path_suffix: str = "/media",
+        media_path_prefixes: Collection[str] = (),
     ) -> None:
         self.app = app
         self.max_body_bytes = max_body_bytes
         self.max_query_bytes = max_query_bytes
         self.media_max_body_bytes = media_max_body_bytes
         self.media_path_suffix = media_path_suffix
+        self.media_path_prefixes = tuple(media_path_prefixes)
 
     def _effective_max_body_bytes(self, scope: Scope) -> int:
         # Media-upload endpoints validate their own tighter, content-type-specific limits;
         # this middleware only needs to admit a request large enough to reach that check
-        # instead of rejecting every upload at the small default JSON-body ceiling.
-        if self.media_max_body_bytes is not None and str(scope.get("path", "")).endswith(
-            self.media_path_suffix
-        ):
-            return self.media_max_body_bytes
+        # instead of rejecting every upload at the small default JSON-body ceiling. Some
+        # endpoints (e.g. direct messages) accept an optional attachment directly rather than
+        # through a dedicated "/media" sub-route, so prefix matches are supported too.
+        if self.media_max_body_bytes is not None:
+            path = str(scope.get("path", ""))
+            if path.endswith(self.media_path_suffix) or path.startswith(self.media_path_prefixes):
+                return self.media_max_body_bytes
         return self.max_body_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

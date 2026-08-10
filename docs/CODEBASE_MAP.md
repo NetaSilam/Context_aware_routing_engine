@@ -85,11 +85,18 @@ Startup is deliberately split into stages:
   creation, polling, history, reopen, run-again, and deletion.
 - `backend/app/forum/routes.py` implements the hazard-reporting forum: post/comment CRUD,
   anonymity-filtered serialization, up/down/none voting with atomically maintained counters, and
-  image/video media upload/retrieval for posts and comments. Requests are ordinary synchronous
-  FastAPI/PostgreSQL work (no Celery task), since posting, commenting, voting, and uploading are
-  bounded writes unlike OSRM/PostGIS route scoring. `backend/app/forum/media_storage.py` owns
-  media content-type/size classification and the disk read/write helpers backing that volume.
-  Direct messages, live notifications, and cold seeding are designed in
+  image/video media upload/retrieval for posts and comments (also serves direct-message media,
+  see below). Requests are ordinary synchronous FastAPI/PostgreSQL work (no Celery task), since
+  posting, commenting, voting, and uploading are bounded writes unlike OSRM/PostGIS route
+  scoring. `backend/app/forum/media_storage.py` owns media content-type/size classification and
+  the disk read/write helpers backing that volume.
+- `backend/app/messaging/routes.py` implements one-to-one direct messages: sending (with an
+  optional single image/video attachment via the same `media_storage.py` helpers, in one
+  multipart request rather than the forum's create-then-attach pattern), a paged conversation
+  view with read-receipt marking, and a conversation-list summary. A DM's media is retrieved
+  through the *same* `GET /api/forum/media/{media_id}` endpoint as forum media (ownership-checked
+  against `sender_user_id`/`recipient_user_id` instead of post/comment authorship) rather than a
+  separate route. Live notifications and cold seeding are designed in
   `docs/FORUM_FEATURE_PRD.md` but not yet implemented; see `docs/forum-feature-tickets.md` for
   status.
 
@@ -124,22 +131,28 @@ Startup is deliberately split into stages:
 
 ## Frontend map
 
-- `frontend/src/App.tsx` loads the authenticated user and switches between the four pages.
+- `frontend/src/App.tsx` loads the authenticated user and switches between the five pages.
 - `frontend/src/pages/PlanRoutePage.tsx` owns route submission, polling, preferences, and history.
 - `frontend/src/pages/ForumPage.tsx` owns the hazard-reporting feed: filtering, pagination, post
   creation, and opening a post into `components/forum/PostDetailPanel.tsx` for comments and
   voting.
+- `frontend/src/pages/InboxPage.tsx` owns direct messaging: the conversation list, starting a new
+  conversation by recipient user ID, and opening a thread into
+  `components/messages/ConversationThread.tsx` for sending text/media replies.
 - `frontend/src/pages/CanonicalNetworkPage.tsx` and
   `frontend/src/pages/AccidentAttributionPage.tsx` are the two map explorer pages.
 - `frontend/src/components/route-jobs/` contains coordinate acquisition, job state rendering, and
   route-history controls.
 - `frontend/src/components/forum/` contains the post form, feed list, post detail/comment panel,
-  shared vote-button component, and the media gallery that renders uploaded images/videos inline.
+  shared vote-button component, and the media gallery that renders uploaded images/videos inline
+  (reused by `components/messages/` for message attachments).
+- `frontend/src/components/messages/` contains the conversation list/start-conversation form and
+  the conversation thread/compose form.
 - `frontend/src/components/auth/` contains the signup/login/profile UI.
 - `frontend/src/components/canonical-network/` and
   `frontend/src/components/accident-attribution/` contain map filters and detail panels.
 - `frontend/src/api/` contains typed client calls and response tests for auth, geocoding, explorer
-  data, route jobs, and the forum.
+  data, route jobs, the forum, and direct messages.
 - `frontend/src/lib/applyVote.ts` is the pure client-side vote-delta helper shared by the feed and
   post detail views, so an optimistic vote click never needs a full refetch.
 - `frontend/src/types/` contains shared TypeScript response/domain types.
@@ -164,15 +177,18 @@ Startup is deliberately split into stages:
 ## Tests and verification
 
 - Backend unit and integration tests are under `backend/tests/`, including
-  `test_forum_routes.py` and `test_forum_media.py` (pure vote/serialization/media-validation
-  logic, no database) and `test_forum_stack.py`/`test_forum_media_stack.py` (real
+  `test_forum_routes.py`, `test_forum_media.py`, and `test_messages_routes.py` (pure
+  vote/serialization/media-validation logic, no database) and
+  `test_forum_stack.py`/`test_forum_media_stack.py`/`test_messages_stack.py` (real
   PostgreSQL/Redis/disk integration: CRUD, ownership, anonymity leak checks, vote counters, the
-  dashboard aggregate, and media upload/retrieval/size/type/ownership/count-cap behavior).
+  dashboard aggregate, media upload/retrieval/size/type/ownership/count-cap behavior, and DM
+  sending/pagination/read-receipts/cross-user isolation).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
-  behavior, including `frontend/src/pages/ForumPage.test.tsx` and
-  `frontend/src/lib/applyVote.test.ts`.
+  behavior, including `frontend/src/pages/ForumPage.test.tsx`, `frontend/src/pages/
+  InboxPage.test.tsx`, `frontend/src/api/messages.test.ts`, and `frontend/src/lib/
+  applyVote.test.ts`.
 - `frontend/e2e/route-journey.mjs` covers the browser route journey.
 - `backend/tests/stress/locustfile.py` covers concurrent and abusive request behavior.
 - `scripts/run_grading_validation.sh` is the complete isolated validation entry point, running one
@@ -192,7 +208,8 @@ Startup is deliberately split into stages:
 | Change database schema | Add an Alembic migration under `backend/alembic/versions/` and update initialization/tests |
 | Change route candidate graph | `osrm/`, Compose OSRM service, compatibility manifest, OSRM tests |
 | Change explorer data | `backend/app/data_routes.py`, frontend explorer API/types/pages, fixture/data docs |
-| Change the forum (posts/comments/votes/media/DMs/notifications) | `backend/app/forum/routes.py`, `backend/app/forum/media_storage.py` for uploads, an Alembic migration, `frontend/src/pages/ForumPage.tsx` and `components/forum/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` for design intent and remaining scope |
+| Change the forum (posts/comments/votes/media) | `backend/app/forum/routes.py`, `backend/app/forum/media_storage.py` for uploads, an Alembic migration, `frontend/src/pages/ForumPage.tsx` and `components/forum/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` for design intent and remaining scope |
+| Change direct messaging | `backend/app/messaging/routes.py` (reuses `backend/app/forum/media_storage.py`), `frontend/src/pages/InboxPage.tsx` and `components/messages/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` |
 
 ## Important boundaries
 
@@ -210,3 +227,7 @@ Startup is deliberately split into stages:
 - Forum media lives on the `forum_media` Docker volume, not in PostgreSQL. Never serve it from a
   guessable static path — always go through the ownership-checked `GET /api/forum/media/{id}`
   endpoint.
+- Direct messages have no separate conversation ID; a conversation is always derived from
+  `(caller, other_user_id)`, and every DM query/mutation is scoped that way. Do not add an
+  endpoint that accepts a bare message or conversation ID without also filtering by the
+  authenticated caller as sender or recipient.

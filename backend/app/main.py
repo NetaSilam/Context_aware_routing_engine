@@ -12,6 +12,7 @@ from app.data_routes import router as data_router
 from app.forum.routes import router as forum_router
 from app.health import router as health_router
 from app.geocoding.router import router as geocoding_router
+from app.messaging.routes import router as messages_router
 from app.routing.route_jobs import router as route_jobs_router
 from app.routing.route_jobs import history_router as route_history_router
 from app.routing.route_jobs import recover_stale_route_jobs
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
         media_max_body_bytes=max(
             settings.forum_media_max_image_bytes, settings.forum_media_max_video_bytes
         ),
+        media_path_prefixes=("/api/messages/",),
     )
 
     app.include_router(health_router)
@@ -53,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(route_jobs_router)
     app.include_router(route_history_router)
     app.include_router(forum_router)
+    app.include_router(messages_router)
     if settings.testing:
         from app.routing.test_scoring_router import router as test_scoring_router
 

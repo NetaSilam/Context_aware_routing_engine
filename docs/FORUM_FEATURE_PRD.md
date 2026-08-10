@@ -255,6 +255,13 @@ grading.
     of user IDs (no separate conversation/thread table in version 1). `GET
     /api/messages/{other_user_id}` returns the paged history between the caller and that user,
     filtered so a user can only ever query conversations they are part of.
+    **Send transport:** `POST /api/messages/{recipient_user_id}` accepts one multipart request
+    with `body` as a plain form field and an optional `file` upload, rather than the forum's
+    create-then-attach-media two-call pattern (ticket 3). A DM carries at most one attachment
+    (unlike a forum post's multiple images/videos), so one combined call is simpler for both the
+    client and the server. This required `RequestSizeLimitMiddleware` to also match by path
+    *prefix* (`/api/messages/`) in addition to its existing path-*suffix* (`/media`) match, since
+    this endpoint has no dedicated `/media` sub-route to key off of.
 
 18. **DM read receipts.** Opening a conversation (`GET /api/messages/{other_user_id}`) marks the
     caller's unread received messages in that conversation as read in the same request, and

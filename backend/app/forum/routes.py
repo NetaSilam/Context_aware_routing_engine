@@ -957,6 +957,7 @@ async def upload_comment_media(
 @router.get("/media/{media_id}")
 async def get_media(media_id: UUID, user: dict[str, Any] = Depends(get_current_user)) -> Response:
     settings = get_settings()
+    viewer_id = int(user["id"])
     try:
         async with get_engine().begin() as connection:
             row = (
@@ -973,9 +974,15 @@ async def get_media(media_id: UUID, user: dict[str, Any] = Depends(get_current_u
                         JOIN app.forum_comments c ON c.id = cm.comment_id
                         JOIN app.forum_posts p ON p.id = c.post_id
                         WHERE cm.id = :id AND c.status = 'active' AND p.status = 'active'
+                        UNION ALL
+                        SELECT dmm.storage_key, dmm.content_type
+                        FROM app.direct_message_media dmm
+                        JOIN app.direct_messages dm ON dm.id = dmm.message_id
+                        WHERE dmm.id = :id
+                              AND (dm.sender_user_id = :viewer_id OR dm.recipient_user_id = :viewer_id)
                         """
                     ),
-                    {"id": media_id},
+                    {"id": media_id, "viewer_id": viewer_id},
                 )
             ).mappings().first()
     except SQLAlchemyError as exc:

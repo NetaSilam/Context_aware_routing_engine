@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     forum_media_max_items_per_comment: int = Field(default=3, ge=1, le=50)
     forum_media_upload_user_rate_limit: int = Field(default=10, ge=1, le=500)
     forum_media_upload_ip_rate_limit: int = Field(default=30, ge=1, le=2000)
+    dm_protection_window_seconds: int = Field(default=60, ge=1, le=3600)
+    dm_send_user_rate_limit: int = Field(default=20, ge=1, le=1000)
+    dm_send_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
 
     @field_validator("database_url")
     @classmethod
@@ -160,6 +163,8 @@ class Settings(BaseSettings):
             raise ValueError("forum vote per-user limit cannot exceed the per-IP limit")
         if self.forum_media_upload_user_rate_limit > self.forum_media_upload_ip_rate_limit:
             raise ValueError("forum media upload per-user limit cannot exceed the per-IP limit")
+        if self.dm_send_user_rate_limit > self.dm_send_ip_rate_limit:
+            raise ValueError("DM send per-user limit cannot exceed the per-IP limit")
         return self
 
 

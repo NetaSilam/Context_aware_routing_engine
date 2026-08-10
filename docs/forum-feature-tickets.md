@@ -127,19 +127,38 @@ conversation pair.
 **Blocked by:** 1. Add forum/messaging/notification schema; 3. Add forum/comment media upload
 and retrieval (reuses its storage/validation path for message attachments).
 
-**Status:** ready-for-agent
+**Status:** done (`backend/app/messaging/routes.py`, `frontend/src/pages/InboxPage.tsx`)
 
-- [ ] `POST /api/messages/{recipient_user_id}` creates a message with optional body and/or one
-      media attachment reusing ticket 3's storage and validation.
-- [ ] `GET /api/messages/{other_user_id}` returns the paged conversation between the caller and
-      that user, newest-last (chat order), and is only reachable by the two participants.
-- [ ] Opening a conversation marks the caller's unread received messages in it as read in the
-      same request.
-- [ ] `GET /api/messages` lists the caller's conversations (other participant, last message
-      preview, unread count), newest-activity-first.
-- [ ] A user cannot query, and gets 404 for, a conversation they are not part of.
-- [ ] Integration tests cover sending, pagination, read-state transitions, media attachment, and
-      cross-user isolation.
+- [x] `POST /api/messages/{recipient_user_id}` creates a message with optional body and/or one
+      media attachment reusing ticket 3's storage and validation, as a single multipart request
+      (`body` as a form field, `file` as an optional upload) rather than a create-then-attach
+      pair — DMs carry at most one attachment, unlike posts, so one combined call was simpler
+      than the forum's two-step flow. This required extending `RequestSizeLimitMiddleware` with
+      a path-*prefix* match (`/api/messages/`) alongside its existing path-*suffix* match
+      (`/media`), since this endpoint accepts an attachment without a dedicated `/media` route.
+- [x] `GET /api/forum/media/{media_id}` (the same shared endpoint from ticket 3, per PRD decision
+      9) now also serves `direct_message_media`, visible only to the message's sender or
+      recipient — no separate DM-specific media endpoint was added.
+- [x] `GET /api/messages/{other_user_id}` returns the paged conversation between the caller and
+      that user, newest-last (chat order: fetched newest-first via `OFFSET`/`LIMIT` then
+      reversed, matching this codebase's existing offset-pagination convention rather than a
+      cursor-based "before" scheme), and is only reachable by the two participants because the
+      query is always scoped to `(sender, recipient) = (me, other) OR (other, me)`.
+- [x] Opening a conversation marks the caller's unread received messages in it as read in the
+      same request (one `UPDATE` immediately before the `SELECT`, same transaction).
+- [x] `GET /api/messages` lists the caller's conversations (other participant, last message
+      preview, unread count), newest-activity-first, via one query using `ROW_NUMBER() OVER
+      (PARTITION BY other_user_id ...)` to pick each partner's latest message.
+- [x] A user cannot query, and gets 404 for, a conversation they are not part of. There is no
+      separate conversation ID to guess in the first place — a conversation is always derived
+      from `(caller, other_user_id)`, so this is true by construction rather than an extra check.
+- [x] Integration tests (`test_messages_stack.py`, 10 tests) cover sending, pagination order,
+      read-state transitions, media attachment (including that a non-participant gets 404 on the
+      attachment), and cross-user isolation — verified via a live Docker Compose run. Unit tests
+      (`test_messages_routes.py`, 4 tests) cover the pure response-serialization helpers.
+      Discovered and fixed along the way: two tests need three fresh signups in one test, but the
+      shared `api` test service caps `SIGNUP_RATE_LIMIT` at 2 per IP per window — the test
+      helper now clears that limiter before every individual signup, not just once per test.
 
 ## 5. Deliver live notifications over Server-Sent Events
 
@@ -183,8 +202,10 @@ retrieval; 4. Deliver direct messaging.
 - [x] Post creation, comment creation, and vote changes already have their own Redis-backed
       per-user/per-IP limits (ticket 2, actions `forum-post-create`/`forum-comment-create`/
       `forum-vote`).
-- [ ] DM sends need the same per-user limit once ticket 4 lands.
-- [ ] Exceeding a limit returns `429` with `Retry-After`.
+- [x] DM sends already have their own Redis-backed per-user/per-IP limit (`dm-send` action,
+      ticket 4) — shipped alongside that ticket rather than leaving it unlimited in the meantime.
+- [x] `enforce_action_rate_limit` (shared by every action above) already sets `Retry-After` on
+      every `429`.
 - [ ] Redis unavailability makes forum/DM writes fail closed with a controlled `503`; read-only
       feed/history endpoints remain available from PostgreSQL where safe.
 - [ ] Numeric limits are validated configuration, not constants scattered through endpoints.
