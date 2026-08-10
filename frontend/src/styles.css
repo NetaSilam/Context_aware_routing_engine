@@ -183,6 +183,15 @@ input {
   margin-top: 16px;
 }
 
+.route-explanation {
+  font-style: italic;
+  color: #324149;
+  background: rgba(13, 114, 136, 0.08);
+  border-radius: 14px;
+  padding: 12px 16px;
+  margin: 12px 0;
+}
+
 .route-candidate-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));

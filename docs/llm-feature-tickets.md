@@ -345,14 +345,31 @@ at, without requiring a page reload.
 
 **Blocked by:** 7. Deliver route explanation on route job completion.
 
-**Status:** ready-for-agent
+**Status:** done (2026-08-11)
 
-- [ ] `PlanRoutePage`'s result panel shows the explanation text when present, and shows nothing
+- [x] `PlanRoutePage`'s result panel shows the explanation text when present, and shows nothing
       extra (not a loading spinner blocking the rest of the result) when it is still processing or
-      failed — the numeric breakdown and map are never gated on it.
-- [ ] Route job/history types and API client gain the new nullable field.
-- [ ] Frontend tests cover both the present and absent states, matching ticket 6's approach for
-      forum classification.
+      failed — the numeric breakdown and map are never gated on it. `RouteJobShell` gained an
+      optional `llmExplanation` prop, rendered as a single italic paragraph inside `RouteResult`
+      right after the "only one route was available" notice and before the map — additive, not
+      gating: the map/candidate grid/version details render identically whether or not it's
+      present. `PlanRoutePage` passes `job?.llm_explanation` straight through (both the live-poll
+      and "open saved history" paths set `job` to a full `RouteJob`, so both flow through the same
+      prop with no separate wiring needed).
+- [x] Route job/history types and API client gain the new nullable field. `RouteJob` and
+      `RouteHistorySummary` (`types/routeJobs.ts`) both gained `llm_explanation: string | null`,
+      mirroring the backend's `RouteJobStatus`/`RouteHistorySummary` response models exactly.
+      `api/routeJobs.ts` needed no changes — like ticket 6, it already forwards these types
+      verbatim from the backend response.
+- [x] Frontend tests cover both the present and absent states, matching ticket 6's approach for
+      forum classification: `RouteJobShell.test.tsx` gained a present/absent test (asserting the
+      rest of the result — map, candidate metrics — renders unchanged either way), and
+      `PlanRoutePage.test.tsx` gained an end-to-end test asserting the explanation text appears
+      after a route job completes with `llm_explanation` set.
+
+**Verified:** `npx tsc --noEmit`, `npx vitest run` (68/68, all suites) locally, then rebuilt and
+ran the `frontend-tests` service against a real disposable Compose stack (project
+`llm-t8-verify`) — build, typecheck, and full vitest suite all passed inside the container.
 
 ## 9. Extend security and stress validation to the LLM queue
 

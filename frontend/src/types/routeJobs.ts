@@ -53,6 +53,7 @@ export interface RouteJob {
   error_message: string | null;
   failure: { code: string; message: string; retryable: boolean } | null;
   result: RouteJobResult | null;
+  llm_explanation: string | null;
 }
 
 export interface RouteHistorySummary {
@@ -72,6 +73,7 @@ export interface RouteHistorySummary {
   coverage: number;
   final_cost: number;
   risk_choice_available: boolean;
+  llm_explanation: string | null;
 }
 
 export interface RouteHistoryPage {

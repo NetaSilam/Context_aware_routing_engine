@@ -198,6 +198,10 @@ Startup is deliberately split into stages:
 
 - `frontend/src/App.tsx` loads the authenticated user and switches between the five pages.
 - `frontend/src/pages/PlanRoutePage.tsx` owns route submission, polling, preferences, and history.
+  It passes `job?.llm_explanation` (present on both the live-poll `RouteJob` and the "open saved
+  history" `RouteJob`, same type either way) straight through to `RouteJobShell`, which renders it
+  as an additive italic paragraph inside the completed result — never gating the map or numeric
+  breakdown, which render identically whether or not the explanation has arrived yet.
 - `frontend/src/pages/ForumPage.tsx` owns the hazard-reporting feed: filtering, pagination, post
   creation, and opening a post into `components/forum/PostDetailPanel.tsx` for comments and
   voting. Both `components/forum/PostList.tsx` and `PostDetailPanel.tsx` also render the LLM
