@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
+import json
 from typing import Any
 from uuid import uuid4
 
@@ -11,7 +11,7 @@ from psycopg.types.json import Jsonb
 
 from app.config import get_settings
 from app.initialize_foundation import synchronous_database_url
-from app.llm.client import classify_report, compare_for_duplicate
+from app.llm.client import classify_report, compare_for_duplicate, explain_route
 from app.llm.scheduling import choose_queue, estimate_duration_ms
 
 settings = get_settings()
@@ -165,13 +165,59 @@ def _run_dedup_check(connection: psycopg.Connection, subject_post_id: str) -> di
     return {"is_duplicate": False, "candidates_checked": len(candidates)}
 
 
-def _run_placeholder(estimated_duration_ms: int) -> dict[str, Any]:
-    # route_explanation (ticket 7) is not dispatched to app/llm/client.py yet — see
-    # docs/llm-feature-tickets.md ticket 3's status for why this placeholder (proportional
-    # sleep, fixed result) is a deliberate, temporary stand-in that already proves the
-    # scheduling/queueing behavior that ticket will reuse unchanged.
-    time.sleep(estimated_duration_ms / 1000)
-    return {"placeholder": True}
+def _run_route_explanation(
+    connection: psycopg.Connection,
+    subject_route_job_id: str,
+    extra_input: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Unlike triage/dedup_check, the LLM inputs are not re-queried here — PRD decision 11
+    passes them as task arguments, since route_job_tasks.py already computed them once via
+    route_scoring_service.py and re-deriving them here would duplicate that logic."""
+    if extra_input is None:
+        raise ValueError("route_explanation job is missing its cost_breakdown/user_context input")
+    explanation = asyncio.run(
+        explain_route(extra_input["cost_breakdown"], extra_input["user_context"])
+    )
+    connection.execute(
+        """
+        UPDATE app.route_jobs
+        SET result = result || jsonb_build_object('llm_explanation', %s::text)
+        WHERE id = %s
+        """,
+        (explanation, subject_route_job_id),
+    )
+    return {"llm_explanation": explanation}
+
+
+def enqueue_route_explanation(
+    *, route_job_id: str, cost_breakdown: dict[str, Any], user_context: dict[str, Any]
+) -> None:
+    """Called by route_job_tasks.py immediately after it writes a route job's completed row.
+    The caller wraps this in a bare except (fail-open, PRD decision 6/11): a problem here must
+    never turn an already-completed route job into a failure, and must never delay the result
+    the user is already looking at."""
+    input_chars = len(json.dumps(cost_breakdown, default=str)) + len(
+        json.dumps(user_context, default=str)
+    )
+    estimated = estimate_duration_ms("route_explanation", input_chars)
+    queue_name = choose_queue(estimated, settings.llm_fast_queue_max_estimated_ms)
+    job_id = uuid4()
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO app.llm_jobs
+                (id, kind, subject_route_job_id, status, queue_name, estimated_duration_ms)
+            VALUES
+                (%s, 'route_explanation', %s, 'queued', %s, %s)
+            """,
+            (job_id, route_job_id, queue_name, estimated),
+        )
+        connection.commit()
+    run_llm_job.apply_async(
+        args=[str(job_id)],
+        kwargs={"extra_input": {"cost_breakdown": cost_breakdown, "user_context": user_context}},
+        queue=queue_name,
+    )
 
 
 @celery_app.task(
@@ -180,19 +226,19 @@ def _run_placeholder(estimated_duration_ms: int) -> dict[str, Any]:
     acks_late=True,
     reject_on_worker_lost=True,
 )
-def run_llm_job(task, job_id: str) -> None:
+def run_llm_job(task, job_id: str, extra_input: dict[str, Any] | None = None) -> None:
     with _connect() as connection:
         row = connection.execute(
             """
             UPDATE app.llm_jobs SET status = 'running'
             WHERE id = %s AND status = 'queued'
-            RETURNING kind, subject_post_id, estimated_duration_ms
+            RETURNING kind, subject_post_id, subject_route_job_id
             """,
             (job_id,),
         ).fetchone()
         if row is None:
             return
-        kind, subject_post_id, estimated_duration_ms = row
+        kind, subject_post_id, subject_route_job_id = row
 
     try:
         if kind == "triage":
@@ -207,7 +253,8 @@ def run_llm_job(task, job_id: str) -> None:
             with _connect() as connection:
                 result = _run_dedup_check(connection, subject_post_id)
         else:
-            result = _run_placeholder(estimated_duration_ms)
+            with _connect() as connection:
+                result = _run_route_explanation(connection, subject_route_job_id, extra_input)
     except Exception as exc:
         # Fail-open (PRD decision 6): classification is enrichment, not load-bearing. The
         # subject (forum post / route job) is left exactly as it was — visible and fully

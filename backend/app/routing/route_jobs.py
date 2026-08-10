@@ -79,6 +79,7 @@ class RouteJobStatus(BaseModel):
     error_message: str | None
     failure: dict[str, Any] | None = None
     result: dict[str, Any] | None
+    llm_explanation: str | None = None
 
 
 class RouteHistorySummary(BaseModel):
@@ -98,6 +99,7 @@ class RouteHistorySummary(BaseModel):
     coverage: float
     final_cost: float
     risk_choice_available: bool
+    llm_explanation: str | None = None
 
 
 class RouteHistoryPage(BaseModel):
@@ -508,6 +510,7 @@ async def get_route_job(
         if response["error_code"]
         else None
     )
+    response["llm_explanation"] = (response["result"] or {}).get("llm_explanation")
     return response
 
 
@@ -568,6 +571,7 @@ async def list_route_history(
                 "coverage": chosen["coverage"],
                 "final_cost": chosen["final_cost"],
                 "risk_choice_available": result["risk_choice_available"],
+                "llm_explanation": result.get("llm_explanation"),
             }
         )
     return {"items": items, "offset": offset, "limit": limit, "has_more": len(rows) > limit}
@@ -611,6 +615,7 @@ async def get_route_history_entry(
     reject_unexpected_query_parameters(request, set())
     response = await _owned_completed_history_row(job_id, user["id"])
     response["failure"] = None
+    response["llm_explanation"] = (response["result"] or {}).get("llm_explanation")
     return response
 
 

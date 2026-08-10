@@ -204,6 +204,19 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
     (that one holds the request inputs, unrelated to the scored output). Same fail-open behavior
     as decision 6: a failed/errored explanation job leaves `llm_explanation` absent from `result`;
     the route result is complete and usable without it.
+
+    **Corrected during ticket 7's verification (2026-08-11):** the merge query as originally
+    written, `result || jsonb_build_object('llm_explanation', :text)`, failed on every real run
+    against the disposable stack with `could not determine data type of parameter $1` — Postgres
+    cannot infer a type for a bare placeholder passed into a polymorphic function like
+    `jsonb_build_object` over the extended query protocol psycopg uses. Fixed with an explicit
+    `%s::text` cast. Also: ticket 3's scheduling test assumed a job's `kind` could stay
+    subject-less and still exercise real dispatch timing — that stopped being true once ticket 4
+    gave `triage` a real handler (a subject-less triage job now fails fast instead of taking
+    time), and more fundamentally, once every `Kind` has real mock-backed dispatch there is no
+    remaining way to make one job's processing time exceed another's while `TESTING=true` (the
+    mock calls are all instant by design). See ticket 7's status for how the scheduling test was
+    reworked to prove queue isolation structurally instead.
 12. **Route explanation reuses the fast queue.** A single explanation call has the same rough cost
     shape as a single triage call (one document in, one short document out) — `estimate_duration_ms`
     classifies it the same way triage is classified, so it does not need a third queue.

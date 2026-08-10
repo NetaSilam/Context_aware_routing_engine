@@ -82,7 +82,11 @@ Startup is deliberately split into stages:
 - `backend/app/data_routes.py` serves the canonical-network and accident-attribution explorer
   APIs. These queries are adapted to the artifacts actually present under `data/`.
 - `backend/app/routing/route_jobs.py` defines route-job request/response models and endpoints for
-  creation, polling, history, reopen, run-again, and deletion.
+  creation, polling, history, reopen, run-again, and deletion. `RouteJobStatus` (GET/history-entry)
+  and `RouteHistorySummary` (history list) both carry a nullable `llm_explanation: str | None`,
+  read out of `result.get("llm_explanation")` — `result` merges it in once the async
+  `route_explanation` job (see `app/llm/tasks.py` above) completes; `null` just means not
+  classified yet or the job failed (fail-open), never an error to the caller.
 - `backend/app/forum/routes.py` implements the hazard-reporting forum: post/comment CRUD,
   anonymity-filtered serialization, up/down/none voting with atomically maintained counters, and
   image/video media upload/retrieval for posts and comments (also serves direct-message media,
@@ -143,12 +147,24 @@ Startup is deliberately split into stages:
   `compare_for_duplicate` against nearby same-hazard-type posts found via an on-the-fly
   `ST_DWithin(..., ...::geography, radius)` search (no stored geometry column on `forum_posts`),
   bounded by `llm_dedup_candidate_limit`, and sets `duplicate_of_post_id` on the first match.
-  `route_explanation` (ticket 7) still uses the ticket 3 placeholder.
+  `route_explanation` calls `explain_route` with the `cost_breakdown`/`user_context` passed in via
+  `run_llm_job`'s `extra_input` kwarg (real Celery task arguments, not re-queried — PRD decision
+  11), then merges the result into `route_jobs.result` via
+  `result || jsonb_build_object('llm_explanation', %s::text)` — the explicit `::text` cast matters:
+  without it Postgres cannot infer a type for a bare placeholder inside a polymorphic function like
+  `jsonb_build_object` (a real bug hit and fixed during ticket 7's verification). The ticket 3
+  placeholder (`_run_placeholder`) is gone — all three `Kind` values have real dispatch now.
+  `app/llm/tasks.py.enqueue_route_explanation` is the sync counterpart to `app/llm/service.py`'s
+  `create_llm_job`/`enqueue_llm_job`, called from `route_job_tasks.py` (a Celery task, so sync
+  `psycopg`, same reasoning as `_enqueue_dedup_check_if_applicable` above).
 
 ### Route execution
 
 - `backend/app/routing/route_job_tasks.py` defines the Celery worker task, retry/recovery behavior,
-  and the worker-side route-job pipeline.
+  and the worker-side route-job pipeline. After writing a job's `completed` row it calls
+  `_enqueue_route_explanation_if_possible` (wrapped in a bare `try/except: pass` — fail-open,
+  PRD decision 6/11), which imports `app.llm.tasks.enqueue_route_explanation` at module scope.
+  This is a one-way dependency (`routing` → `llm`); `app/llm/` never imports from `app/routing/`.
 - `backend/app/routing/osrm_client.py` validates the internal OSRM response and maps user
   motorway/toll preferences to supported OSRM exclusions.
 - `backend/app/corridor_matcher.py` implements the selected `sampled-nearest-v1` matcher: one
@@ -266,10 +282,15 @@ Startup is deliberately split into stages:
   responses, non-2xx status, missing fields), and the mocked (`settings.testing`) path is proven to
   never construct `httpx.AsyncClient` at all by monkeypatching it to raise if called.
   `test_llm_scheduling.py` unit-tests `estimate_duration_ms`/`choose_queue`'s boundaries.
-  `test_llm_scheduling_stack.py` proves fast jobs complete despite a slow job queued first, using
-  its own dedicated Redis db and short-lived worker subprocesses (not the standing
-  `llm-worker-fast`/`llm-worker-slow` services) so no other consumer can race to grab a job first —
-  this is the test that originally disproved the single-worker `-Q llm-fast,llm-slow` design.
+  `test_llm_scheduling_stack.py` proves queue isolation using its own dedicated Redis db and
+  short-lived worker subprocesses (not the standing `llm-worker-fast`/`llm-worker-slow` services)
+  so no other consumer can race to grab a job first — this is the test that originally disproved
+  the single-worker `-Q llm-fast,llm-slow` design. It was reworked during ticket 7: once every
+  `Kind` got real (mock-backed, effectively instant) dispatch, there was no longer a way to make
+  one job's real processing time exceed another's, so it now starts only the `llm-fast` worker,
+  asserts the fast jobs complete, and asserts the slow job is still exactly `'queued'` (proving no
+  consumer has touched it) before starting an `llm-slow` worker as a sanity check that the slow
+  job isn't broken, just deprioritized.
   `test_llm_triage_stack.py` proves the real end-to-end triage integration against the running
   `api` + `llm-worker-fast` services: creating a post leaves it unclassified in the immediate
   response, polling `app.llm_jobs` (not a fixed sleep) shows the classification appear once the
@@ -282,6 +303,12 @@ Startup is deliberately split into stages:
   proves a genuine near-duplicate gets flagged, a different hazard type or far-away location does
   not, a post with no coordinates never gets a `dedup_check` job, and a dense cluster of candidates
   is genuinely capped (`result.candidates_checked` equals the override, not the real total).
+  `test_llm_route_explanation_stack.py` proves the second real LLM feature: a real HTTP
+  submit-a-route-job-and-poll test shows `llm_explanation` eventually appears merged into
+  `result` without disturbing `chosen_index`/`candidates`, and a direct-function-call test (like
+  `test_llm_scheduling_stack.py`'s pattern, since the real cost breakdown/user context are
+  computed numbers/enums with no HTTP-reachable free-text channel for `TEST_FAILURE_MARKER`)
+  proves a failed explanation job leaves the route job's `result` byte-for-byte unchanged.
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client

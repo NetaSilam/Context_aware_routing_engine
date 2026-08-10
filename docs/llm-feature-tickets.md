@@ -271,24 +271,72 @@ explanation attached to every completed route job.
 
 **Blocked by:** 2. Add the Gemini client.
 
-**Status:** ready-for-agent
+**Status:** done (2026-08-11)
 
-- [ ] The route job Celery task (`route_job_tasks.py`) enqueues a `route_explanation` LLM job
+- [x] The route job Celery task (`route_job_tasks.py`) enqueues a `route_explanation` LLM job
       immediately after writing the job's `completed` row, passing the chosen candidate's cost
       breakdown and the user's scoring context as task arguments (PRD decision 11) — never before
       that row is written, and never blocking the route job's own completion.
-- [ ] `run_llm_job`'s `route_explanation` dispatch (consumed by `llm-worker-fast`, per PRD
+      `_enqueue_route_explanation_if_possible` finds the chosen candidate in the in-memory
+      `result["candidates"]` by matching `candidate_index` (not by list position — the two are
+      not guaranteed to coincide), builds `cost_breakdown`/`user_context` per decision 11, and
+      calls the new `app.llm.tasks.enqueue_route_explanation`. The call site is wrapped in a bare
+      `try/except: pass`, same as `_enqueue_dedup_check_if_applicable` in ticket 5.
+- [x] `run_llm_job`'s `route_explanation` dispatch (consumed by `llm-worker-fast`, per PRD
       decision 12 — reuses the fast queue) calls `explain_route`, then merges the result
       into `route_jobs.result` (the column `_calculate_result` already populates with candidates/
       chosen_index) via `result || jsonb_build_object('llm_explanation', ...)` — not the
-      `snapshot` column, and no new column.
-- [ ] A provider error or timeout leaves the route job's existing fields (candidates, chosen
+      `snapshot` column, and no new column. `run_llm_job` gained an optional `extra_input` kwarg
+      (only `route_explanation` uses it) so the cost breakdown/user context can be passed as real
+      Celery task arguments per decision 11, instead of re-querying like triage/dedup_check do.
+      The now-fully-dead `_run_placeholder` (ticket 3's temporary stand-in for this exact kind)
+      was deleted along with the `else` branch that dispatched to it — all three `Kind` values
+      have real handlers now.
+- [x] A provider error or timeout leaves the route job's existing fields (candidates, chosen
       index, cost breakdown) fully intact; `llm_explanation` is simply absent (PRD decision 6/11,
       fail-open) — verified with the mock simulating a failure, not just asserted from the code.
-- [ ] Route job GET/history response models expose a nullable `llm_explanation` field read from
-      `result`.
-- [ ] Integration test: submit a route job against the real disposable stack, wait for it to
-      complete, then wait for the (mocked) explanation to appear in the same job's `result`.
+- [x] Route job GET/history response models expose a nullable `llm_explanation` field read from
+      `result`. Added to both `RouteJobStatus` (used by `GET /api/route-jobs/{id}` and
+      `GET /api/route-history/{id}`) and `RouteHistorySummary` (`GET /api/route-history`).
+- [x] Integration test: `tests/test_llm_route_explanation_stack.py`, two tests — a real HTTP
+      submit-and-poll happy path, and a fail-open test that calls `enqueue_route_explanation`
+      directly against a fixture route job (mirroring ticket 3's direct-function-call pattern,
+      since the real `cost_breakdown`/`user_context` are computed numbers/enums with no
+      HTTP-reachable free-text channel to embed `TEST_FAILURE_MARKER` in, unlike forum triage/
+      dedup's report body).
+
+**Real bugs found and fixed during verification (not just asserted from the code):**
+
+1. **`jsonb_build_object` couldn't infer its parameter's type.** The first real run against the
+   disposable stack failed every `route_explanation` job with
+   `could not determine data type of parameter $1` — Postgres cannot infer a type for an
+   anonymous placeholder passed into a polymorphic function like `jsonb_build_object(key, $1)`
+   over the extended query protocol psycopg uses. Fixed with an explicit
+   `jsonb_build_object('llm_explanation', %s::text)` cast. This is the negative control for this
+   ticket: the integration test failed for a real reason, got fixed, and the fix was verified by
+   re-running the same test, rather than needing an artificial break/revert cycle.
+2. **`test_llm_scheduling_stack.py` (ticket 3) silently broke back at ticket 4/5 and nobody
+   noticed until now.** That test's "slow job" premise depended on `_run_placeholder`'s
+   `time.sleep(estimated_duration_ms / 1000)` to actually take longer than the fast jobs. Once
+   ticket 4 gave `kind="triage"` a real dispatch (`_run_triage`), the test's subject-less fast
+   jobs started hitting `LookupError: forum post None no longer exists` and failing outright —
+   this ticket's full regression pass (running every existing `llm-*-tests`/`route-job-tests`
+   service, not just the new one) is what caught it, since ticket 4/5/6's own verification only
+   re-ran each ticket's own new test file, not the full suite. The deeper issue: once every
+   `Kind` has real, mock-backed dispatch, every mock LLM call is effectively instant by design
+   (`TESTING=true` exists so tests run fast) — there is no longer a way to make one job's real
+   processing time exceed another's. Rewrote the test to prove queue isolation structurally
+   instead of racing wall-clock time: only the `llm-fast` worker is started while asserting the
+   fast jobs complete; the slow job is asserted to still be `'queued'` (not just "not yet
+   completed") since literally no consumer exists for `llm-slow` at that point. A `llm-slow`
+   worker is then started as a sanity check that the slow job isn't broken, just deprioritized.
+   Also gave the test's jobs a real seeded `subject_post_id` (real dispatch now requires one for
+   `triage`/`dedup_check`).
+
+**Verified:** ran `tests/test_llm_route_explanation_stack.py` against the real disposable stack,
+then re-ran the full existing regression set (`route-job-tests`, `route-history-tests`,
+`llm-stack-tests`, `llm-scheduling-tests`, `llm-triage-tests`, `llm-dedup-tests`, `unit-tests`) —
+all green after the two fixes above.
 
 ## 8. Surface the route explanation in the frontend
 

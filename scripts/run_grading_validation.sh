@@ -6,7 +6,7 @@ services=(
   unit-tests frontend-tests foundation-tests risk-data-tests corridor-matcher-tests
   osrm-contract-tests route-job-tests route-history-tests geocoding-tests auth-tests
   forum-tests forum-security-tests forum-seed-tests messages-tests notifications-tests abuse-tests forum-abuse-tests
-  llm-stack-tests llm-scheduling-tests llm-triage-tests llm-dedup-tests gateway-tests e2e-tests stress-tests
+  llm-stack-tests llm-scheduling-tests llm-triage-tests llm-dedup-tests llm-route-explanation-tests gateway-tests e2e-tests stress-tests
 )
 
 run_service() {

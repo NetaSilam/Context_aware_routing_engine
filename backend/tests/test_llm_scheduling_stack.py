@@ -30,6 +30,15 @@ def _job_status(job_id: UUID) -> str | None:
     return row[0] if row else None
 
 
+def _real_post_id() -> str:
+    # Cold-seeded by `initialize` — see test_llm_stack.py for the same expectation. Real triage/
+    # dedup_check dispatch (tickets 4/5) needs a subject that actually exists; this test only
+    # cares about queue isolation, not classification content, so any seeded post will do.
+    with psycopg.connect(DATABASE_URL) as connection:
+        row = connection.execute("SELECT id FROM app.forum_posts LIMIT 1").fetchone()
+    return str(row[0])
+
+
 def _spawn_worker(queue: str) -> subprocess.Popen:
     return subprocess.Popen(
         [
@@ -54,16 +63,33 @@ def test_llm_fast_jobs_complete_quickly_despite_a_slow_job_queued_first() -> Non
     # slow job finished before the fast ones despite being queued after them being impossible —
     # see docs/LLM_FEATURE_PRD.md decision 2. The fix, proven here, is two separate worker
     # processes, one per queue — OS-level isolation, not broker-internal ordering.
+    #
+    # Once every kind (triage/dedup_check/route_explanation) got real dispatch (tickets 4/5/7),
+    # every mock-path LLM call became effectively instant by design (TESTING=true exists so tests
+    # run fast) — there is no longer a reliable way to make a "slow" job's real processing time
+    # actually take longer than a "fast" job's. So this proves isolation structurally instead of
+    # by a wall-clock race: only the llm-fast worker is ever started while asserting the fast jobs
+    # complete; the slow job sits in llm-slow with zero consumers, so it is provably untouched —
+    # a slow-queued job can never delay a fast-queued one, independent of relative processing time.
     from app.db import get_engine
     from app.llm.service import create_llm_job, enqueue_llm_job
+
+    real_post_id = _real_post_id()
 
     async def _create_jobs():
         async with get_engine().begin() as connection:
             slow_job = await create_llm_job(
-                connection, kind="dedup_check", input_chars=50, candidate_count=60
+                connection,
+                kind="dedup_check",
+                subject_post_id=real_post_id,
+                input_chars=50,
+                candidate_count=60,
             )
             fast_jobs = [
-                await create_llm_job(connection, kind="triage", input_chars=10) for _ in range(3)
+                await create_llm_job(
+                    connection, kind="triage", subject_post_id=real_post_id, input_chars=10
+                )
+                for _ in range(3)
             ]
         return slow_job, fast_jobs
 
@@ -79,7 +105,6 @@ def test_llm_fast_jobs_complete_quickly_despite_a_slow_job_queued_first() -> Non
         enqueue_llm_job(job)
 
     fast_worker = _spawn_worker("llm-fast")
-    slow_worker = _spawn_worker("llm-slow")
     try:
         deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
@@ -89,12 +114,24 @@ def test_llm_fast_jobs_complete_quickly_despite_a_slow_job_queued_first() -> Non
         else:
             pytest.fail("fast jobs did not complete in time")
 
-        assert _job_status(slow_job["id"]) != "completed", (
-            "the slow job completed before the fast jobs did — a single slow worker should "
-            "never keep up with three short triage jobs on a separate worker"
+        assert _job_status(slow_job["id"]) == "queued", (
+            "the slow job should still be untouched — no worker has ever consumed llm-slow"
         )
     finally:
         fast_worker.terminate()
-        slow_worker.terminate()
         fast_worker.wait(timeout=10)
+
+    # Sanity check: the slow job is not broken, just deprioritized — it completes once its own
+    # queue actually has a consumer.
+    slow_worker = _spawn_worker("llm-slow")
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if _job_status(slow_job["id"]) == "completed":
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail("slow job never completed once its own worker was started")
+    finally:
+        slow_worker.terminate()
         slow_worker.wait(timeout=10)
