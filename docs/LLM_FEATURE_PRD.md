@@ -112,10 +112,20 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    `estimate_duration_ms(...)` (ticket 3) and passes `queue="llm-fast"` or `"llm-slow"` explicitly
    to `.apply_async(...)` — a static `task_routes` table keyed by task name cannot express "this
    specific triage call, because its body happens to be long, goes to the slow queue," which is
-   exactly the behavior the fill-time heuristic requirement asks for. A new `llm-worker` Compose
-   service runs `celery -A app.llm.tasks.celery_app worker -Q llm-fast,llm-slow --loglevel=INFO`
-   (queue order matters — Celery drains listed queues in order, giving fast jobs priority). The
-   existing `worker` service is untouched and continues to own only the routing queue.
+   exactly the behavior the fill-time heuristic requirement asks for. The existing `worker`
+   service is untouched and continues to own only the routing queue.
+   **Corrected during ticket 3's verification (2026-08-10):** the original plan here was a single
+   `llm-worker` Compose service running `celery ... worker -Q llm-fast,llm-slow`, on the assumption
+   that Celery/Kombu's Redis transport drains multiple `-Q` queues in the listed order (fast
+   first). A real end-to-end test proved that assumption **false**: `celery inspect active_queues`
+   shows both queues bound with `max_priority: None`, and Kombu's virtual-transport polling is not
+   a strict per-queue-order priority — a slow job enqueued first genuinely finished before three
+   fast jobs enqueued right after it, with a single worker consuming both queues. The fix is
+   **two separate worker processes, one per queue** (`llm-worker-fast` -Q `llm-fast`,
+   `llm-worker-slow` -Q `llm-slow`), not one worker juggling both — this guarantees fast jobs can
+   never be blocked by a slow one through OS-level process isolation, not through relying on
+   broker-internal ordering semantics that turned out not to hold. Both remain part of the same
+   `app/llm/tasks.py` Celery app/broker; only the Compose service (and its `-Q` argument) differs.
 3. **Schema.** `app.llm_jobs`: `id (uuid)`, `kind` (`triage` | `dedup_check` | `route_explanation`),
    `subject_post_id` (nullable — unused for `route_explanation`), `subject_route_job_id` (nullable
    — unused for `triage`/`dedup_check`, references `app.route_jobs.id`), `status`

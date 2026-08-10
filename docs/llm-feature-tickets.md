@@ -27,9 +27,11 @@ somewhere to enqueue work without sharing the routing queue.
       `task_routes` table — queue assignment happens per enqueue call once the fill-time heuristic
       lands (ticket 3); this ticket only ships the app/worker skeleton (PRD decision 2, revised
       from an earlier draft that incorrectly described static `task_routes`).
-- [x] `compose.yaml` gains an `llm-worker` service (`hostname: llm-worker`, not scaled) running
-      `celery -A app.llm.tasks.celery_app worker -Q llm-fast,llm-slow`, separate from the existing
-      `worker` service, which is untouched.
+- [x] `compose.yaml` gains a Compose worker service, separate from the existing `worker` service
+      (which is untouched) — **superseded by ticket 3**: this originally shipped as one
+      `llm-worker` service running `-Q llm-fast,llm-slow`, later split into `llm-worker-fast`/
+      `llm-worker-slow` once ticket 3's own verification proved single-worker multi-queue
+      "priority" was not real (see ticket 3's status for the full story).
 - [x] New `Settings` fields: `gemini_api_key` (`str | None`, genuinely optional at the Settings
       level — no cross-field validator requiring it, since ~30 existing test services never set
       `TESTING`/`GEMINI_API_KEY` and would otherwise fail to construct `Settings` at all; caught
@@ -92,19 +94,45 @@ heuristic that always returns the same estimate.
 
 **Blocked by:** 1. Add LLM job schema and a physically separate Celery queue.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/app/llm/scheduling.py`, `backend/app/llm/service.py`,
+`compose.yaml`'s `llm-worker-fast`/`llm-worker-slow`)
 
-- [ ] `estimate_duration_ms(kind, input_chars, candidate_count=0)` is a pure function: base cost +
+- [x] `estimate_duration_ms(kind, input_chars, candidate_count=0)` is a pure function: base cost +
       per-character cost for `triage`; additionally a per-candidate cost for `dedup_check` (PRD
-      decision 4).
-- [ ] Jobs at or under `llm_fast_queue_max_estimated_ms` route to `llm-fast`; everything else to
-      `llm-slow`.
-- [ ] Unit tests cover the boundary (exactly at the threshold, just under, just over) and that a
-      large `candidate_count` alone can push an otherwise-small job into `llm-slow`.
-- [ ] An integration test proves the scheduling actually works, not just the routing decision:
-      enqueue one `llm-slow` job (many candidates) before several `llm-fast` jobs, and assert the
-      fast jobs' results are observable before the slow job's (PRD Testing Decision 4) — run
-      against the real `llm-worker` service.
+      decision 4). `choose_queue(estimated_duration_ms, fast_queue_max_estimated_ms)` picks
+      `llm-fast`/`llm-slow`.
+- [x] `app/llm/service.py`'s `create_llm_job`/`enqueue_llm_job` (mirroring
+      `notifications/service.py`'s `create_notification`/`publish_notification` two-phase split —
+      insert inside the caller's transaction, dispatch after it commits) compute the estimate and
+      queue once per job and insert them into `app.llm_jobs`. Jobs at or under
+      `llm_fast_queue_max_estimated_ms` route to `llm-fast`; everything else to `llm-slow`.
+- [x] Unit tests (`test_llm_scheduling.py`, 6 cases) cover the boundary (exactly at the threshold,
+      just under, just over) and that a large `candidate_count` alone can push an otherwise-small
+      `dedup_check` job into `llm-slow`.
+- [x] An integration test (`test_llm_scheduling_stack.py`) proves the scheduling actually works,
+      not just the routing decision — and in doing so **disproved the original architecture**:
+      the first version enqueued one `llm-slow` job (many candidates) before three `llm-fast`
+      jobs, started a single worker consuming `-Q llm-fast,llm-slow`, and expected the fast jobs
+      to finish first. They did not — `celery inspect active_queues` showed both queues bound
+      with no priority (`max_priority: None`), and the slow job completed before any fast job,
+      proving Kombu's Redis transport does not drain multiple `-Q` queues in listed order despite
+      that being the original (unverified) assumption in PRD decision 2. **Fix:** two separate
+      worker processes, one per queue (`llm-worker-fast` / `llm-worker-slow` in `compose.yaml`),
+      giving fast jobs OS-level isolation from a slow one instead of relying on broker-internal
+      ordering. Re-verified with the corrected architecture: fast jobs consistently complete
+      while the slow job is still running. `app/llm/tasks.py`'s `run_llm_job` task itself is a
+      placeholder for this ticket (`time.sleep(estimated_duration_ms / 1000)` then a fixed
+      `{"placeholder": True}` result) — real, since it genuinely takes proportional wall-clock
+      time, but not yet dispatching to `app/llm/client.py`; tickets 4/5/7 replace the task body
+      with real `classify_report`/`compare_for_duplicate`/`explain_route` calls without changing
+      how a job is created, estimated, queued, or which worker consumes it.
+- [x] Migration `0008_llm_jobs_relax_subject_constraint.py`: ticket 1's original constraint
+      required a `subject_post_id`/`subject_route_job_id` to be present for its matching `kind`,
+      which correctly rejects a mismatched subject but also rejected this ticket's legitimate
+      subject-less scheduling-only jobs. Relaxed to reject only a subject column that does not
+      match its kind, not absence — `test_llm_stack.py` updated to match (and to prove the
+      mismatch case is still rejected using a real, existing forum post id, isolating the
+      assertion from the separate foreign-key constraint).
 
 ## 4. Deliver hazard report triage on post creation
 
@@ -117,7 +145,8 @@ LLM-suggested `hazard_type`/`severity`.
 
 - [ ] `create_post` (in `app/forum/routes.py`) enqueues a `triage` job referencing the new post
       after its transaction commits (same after-commit pattern as notifications, PRD decision 5).
-- [ ] The `llm-worker`'s triage task calls `classify_report`, writes the result onto
+- [ ] `run_llm_job`'s `triage` dispatch (consumed by `llm-worker-fast`, per ticket 3's estimate —
+      a single report is always a fast job) calls `classify_report`, writes the result onto
       `llm_jobs`/the post's new columns, and marks the job `completed`.
 - [ ] A provider error or timeout marks the job `failed` and leaves the post fully visible and
       functional, unclassified (PRD decision 6, fail-open) — verified with the mock simulating a
@@ -180,7 +209,8 @@ explanation attached to every completed route job.
       immediately after writing the job's `completed` row, passing the chosen candidate's cost
       breakdown and the user's scoring context as task arguments (PRD decision 11) — never before
       that row is written, and never blocking the route job's own completion.
-- [ ] The `llm-worker`'s `route_explanation` task calls `explain_route`, then merges the result
+- [ ] `run_llm_job`'s `route_explanation` dispatch (consumed by `llm-worker-fast`, per PRD
+      decision 12 — reuses the fast queue) calls `explain_route`, then merges the result
       into `route_jobs.result` (the column `_calculate_result` already populates with candidates/
       chosen_index) via `result || jsonb_build_object('llm_explanation', ...)` — not the
       `snapshot` column, and no new column.

@@ -57,21 +57,44 @@ def test_forum_posts_gains_nullable_llm_columns() -> None:
     assert columns["duplicate_of_post_id"] == "YES"
 
 
-def test_llm_jobs_kind_and_subject_are_consistent() -> None:
+def test_llm_jobs_allows_a_subject_less_job_but_rejects_a_mismatched_subject() -> None:
+    # 0008 relaxed 0007's original "kind requires a subject" constraint: a scheduling-only job
+    # (ticket 3's integration test) legitimately has no real forum post/route job to reference
+    # yet. What must still be rejected is a subject column that belongs to the wrong kind.
     with psycopg.connect(DATABASE_URL) as connection:
+        with connection.transaction():
+            connection.execute(
+                """
+                INSERT INTO app.llm_jobs
+                    (id, kind, status, queue_name, estimated_duration_ms)
+                VALUES
+                    (gen_random_uuid(), 'triage', 'queued', 'llm-fast', 100)
+                """
+            )
+
+        # A real, existing forum post id (cold-seeded by `initialize`) isolates the assertion to
+        # the CHECK constraint itself, rather than also tripping the subject_post_id foreign key.
+        real_post_id = connection.execute(
+            "SELECT id FROM app.forum_posts LIMIT 1"
+        ).fetchone()[0]
+
         with pytest.raises(psycopg.errors.CheckViolation):
             with connection.transaction():
                 connection.execute(
                     """
                     INSERT INTO app.llm_jobs
-                        (id, kind, status, queue_name, estimated_duration_ms)
+                        (id, kind, subject_post_id, status, queue_name, estimated_duration_ms)
                     VALUES
-                        (gen_random_uuid(), 'triage', 'queued', 'llm-fast', 100)
-                    """
+                        (gen_random_uuid(), 'route_explanation', %s, 'queued', 'llm-fast', 100)
+                    """,
+                    (real_post_id,),
                 )
 
 
-def test_llm_worker_is_running_and_responds_to_a_celery_ping() -> None:
+def test_llm_workers_are_running_and_respond_to_a_celery_ping() -> None:
+    # Two separate worker processes, one per queue (llm-worker-fast / llm-worker-slow) — not one
+    # worker listening to both — see docs/LLM_FEATURE_PRD.md decision 2 for why: a real test
+    # proved Celery/Kombu's Redis transport does not reliably prioritize by -Q argument order.
     redis.Redis.from_url(REDIS_URL).ping()
     app = Celery("llm-stack-test", broker=REDIS_URL)
     try:
@@ -79,4 +102,5 @@ def test_llm_worker_is_running_and_responds_to_a_celery_ping() -> None:
     finally:
         app.close()
     assert replies, "no llm worker responded to the Celery health ping"
-    assert any("llm-worker" in hostname for hostname in replies)
+    assert any("llm-worker-fast" in hostname for hostname in replies)
+    assert any("llm-worker-slow" in hostname for hostname in replies)

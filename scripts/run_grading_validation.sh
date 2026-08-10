@@ -6,7 +6,7 @@ services=(
   unit-tests frontend-tests foundation-tests risk-data-tests corridor-matcher-tests
   osrm-contract-tests route-job-tests route-history-tests geocoding-tests auth-tests
   forum-tests forum-security-tests forum-seed-tests messages-tests notifications-tests abuse-tests forum-abuse-tests
-  llm-stack-tests gateway-tests e2e-tests stress-tests
+  llm-stack-tests llm-scheduling-tests gateway-tests e2e-tests stress-tests
 )
 
 run_service() {
@@ -17,7 +17,7 @@ run_service() {
 
   cleanup_service() { "${compose[@]}" down --volumes --remove-orphans; }
   trap cleanup_service RETURN
-  "${compose[@]}" up --build --wait --scale worker=2 postgres redis fake-osrm fake-geocoder api worker llm-worker frontend abuse-api stress-api secure-auth-api auth-unavailable-api geocoding-unavailable-api queue-unavailable-api
+  "${compose[@]}" up --build --wait --scale worker=2 postgres redis fake-osrm fake-geocoder api worker llm-worker-fast llm-worker-slow frontend abuse-api stress-api secure-auth-api auth-unavailable-api geocoding-unavailable-api queue-unavailable-api
   "${compose[@]}" run --rm --no-deps "$service"
   trap - RETURN
   cleanup_service

@@ -125,10 +125,32 @@ services:
       - ./osrm/deployment-compatibility.json:/osrm/deployment-compatibility.json:ro
     restart: unless-stopped
 
-  llm-worker:
+  llm-worker-fast:
     build: ./backend
-    hostname: llm-worker
-    command: ["celery", "-A", "app.llm.tasks.celery_app", "worker", "-Q", "llm-fast,llm-slow", "--loglevel=INFO"]
+    hostname: llm-worker-fast
+    command: ["celery", "-A", "app.llm.tasks.celery_app", "worker", "-Q", "llm-fast", "--loglevel=INFO"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}
+      FOUNDATION_DATA_VERSION: ${FOUNDATION_DATA_VERSION:?Set FOUNDATION_DATA_VERSION in .env}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      AUTH_ALLOWED_ORIGIN: ${AUTH_ALLOWED_ORIGIN:?Set AUTH_ALLOWED_ORIGIN in .env}
+      OSRM_BASE_URL: ${OSRM_BASE_URL:?Set OSRM_BASE_URL in .env}
+      EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
+      GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
+      GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  llm-worker-slow:
+    build: ./backend
+    hostname: llm-worker-slow
+    command: ["celery", "-A", "app.llm.tasks.celery_app", "worker", "-Q", "llm-slow", "--loglevel=INFO"]
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}

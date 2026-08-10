@@ -105,14 +105,22 @@ Startup is deliberately split into stages:
   and the `GET /api/notifications/stream` Server-Sent Events endpoint. Cold seeding is designed
   in `docs/FORUM_FEATURE_PRD.md` but not yet implemented; see `docs/forum-feature-tickets.md` for
   status.
-- `backend/app/llm/tasks.py` defines a Celery app (`llm-worker`, service in `compose.yaml`)
-  physically separate from the routing worker's, sharing the same Redis broker but never the same
-  queue names (`llm-fast`/`llm-slow` vs. the routing worker's default queue) — see
-  `docs/LLM_FEATURE_PRD.md` for the hazard-report triage/dedup and route-explanation features this
-  queue exists to serve, and `docs/llm-feature-tickets.md` for what is implemented versus planned.
-  Migration `0007_llm_jobs.py` adds `app.llm_jobs` and nullable classification columns on
-  `app.forum_posts`; `app.route_jobs` gets no new column (see the PRD's decision on why the
-  explanation is merged into the existing `result` column instead).
+- `backend/app/llm/tasks.py` defines a Celery app, physically separate from the routing worker's,
+  sharing the same Redis broker but never the same queue names (`llm-fast`/`llm-slow` vs. the
+  routing worker's default queue). Two Compose services consume it — `llm-worker-fast` (`-Q
+  llm-fast`) and `llm-worker-slow` (`-Q llm-slow`), deliberately two separate processes rather than
+  one worker listening to both: a real test proved Celery/Kombu's Redis transport does not drain
+  multiple `-Q` queues in listed-argument order, so only OS-level process isolation reliably keeps
+  a slow job from blocking fast ones (`docs/LLM_FEATURE_PRD.md` decision 2). `app/llm/service.py`'s
+  `create_llm_job`/`enqueue_llm_job` (mirroring `notifications/service.py`'s two-phase
+  create/publish split) compute each job's estimated duration and queue via
+  `app/llm/scheduling.py`. See `docs/LLM_FEATURE_PRD.md` for the hazard-report triage/dedup and
+  route-explanation features this queue exists to serve, and `docs/llm-feature-tickets.md` for what
+  is implemented versus planned. Migration `0007_llm_jobs.py` adds `app.llm_jobs` and nullable
+  classification columns on `app.forum_posts` (`0008` relaxed its subject-presence constraint to
+  subject-*correctness* only, since a subject-less job is legitimate); `app.route_jobs` gets no new
+  column (see the PRD's decision on why the explanation is merged into the existing `result`
+  column instead).
 - `backend/app/llm/client.py` is the only module in the codebase that calls Google Gemini —
   `classify_report`/`compare_for_duplicate`/`explain_route`, each gated by `settings.testing`
   (real HTTP call via `httpx.AsyncClient` when false; a fixed or input-derived deterministic value
@@ -225,16 +233,21 @@ Startup is deliberately split into stages:
   in-process `TestClient(create_app())` run creates a post/comment/DM/media upload with
   distinctive marker strings and asserts none of them appear in `capfd`-captured process
   stdout/stderr).
-- `test_llm_stack.py` (real PostgreSQL/Redis/Celery integration) proves the `0007_llm_jobs.py`
-  migration's shape (including the `kind`/`subject_*` consistency `CHECK` constraint) and that the
-  real `llm-worker` service responds to a Celery health ping. `test_health.py` unit-tests
-  `_queue_worker_readiness`'s hostname filter directly (fake `Celery`/`get_redis`, no real infra
-  needed) — a ping reply containing only an `llm-worker` hostname must not satisfy route-worker
-  readiness, and a reply that also contains a genuine route-worker hostname must. `test_llm_client.py`
-  unit-tests `app/llm/client.py` entirely without real infra: `httpx.MockTransport` stands in for
-  Gemini on the real-call path (well-formed/malformed responses, non-2xx status, missing fields),
-  and the mocked (`settings.testing`) path is proven to never construct `httpx.AsyncClient` at all
-  by monkeypatching it to raise if called.
+- `test_llm_stack.py` (real PostgreSQL/Redis/Celery integration) proves the `0007`/`0008` migration
+  shape (including the subject-matches-kind `CHECK` constraint) and that both real
+  `llm-worker-fast`/`llm-worker-slow` services respond to a Celery health ping. `test_health.py`
+  unit-tests `_queue_worker_readiness`'s hostname filter directly (fake `Celery`/`get_redis`, no
+  real infra needed) — a ping reply containing only an `llm-worker`-prefixed hostname must not
+  satisfy route-worker readiness, and a reply that also contains a genuine route-worker hostname
+  must. `test_llm_client.py` unit-tests `app/llm/client.py` entirely without real infra:
+  `httpx.MockTransport` stands in for Gemini on the real-call path (well-formed/malformed
+  responses, non-2xx status, missing fields), and the mocked (`settings.testing`) path is proven to
+  never construct `httpx.AsyncClient` at all by monkeypatching it to raise if called.
+  `test_llm_scheduling.py` unit-tests `estimate_duration_ms`/`choose_queue`'s boundaries.
+  `test_llm_scheduling_stack.py` proves fast jobs complete despite a slow job queued first, using
+  its own dedicated Redis db and short-lived worker subprocesses (not the standing
+  `llm-worker-fast`/`llm-worker-slow` services) so no other consumer can race to grab a job first —
+  this is the test that originally disproved the single-worker `-Q llm-fast,llm-slow` design.
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
@@ -307,17 +320,24 @@ Startup is deliberately split into stages:
   `app/routing/route_jobs.py`'s `log_route_event` already does — from a different module, and
   update `test_forum_security.py`'s watched-module logic deliberately rather than working around
   the check.
-- `app/llm/tasks.py`'s Celery app (`llm-worker`) shares the same Redis broker as
-  `app/routing/route_job_tasks.py`'s (`worker`) — deliberately, to avoid a second broker, but this
-  means `Celery.control.inspect().ping()` broadcasts to *both* and cannot tell them apart by
-  itself. `health.py`'s `_queue_worker_readiness` filters ping replies by hostname (excluding
-  anything containing `"llm-worker"`) specifically so an `llm-worker` outage can never be
+- `app/llm/tasks.py`'s Celery app (`llm-worker-fast`/`llm-worker-slow`) shares the same Redis
+  broker as `app/routing/route_job_tasks.py`'s (`worker`) — deliberately, to avoid a second broker,
+  but this means `Celery.control.inspect().ping()` broadcasts to *all three* and cannot tell them
+  apart by itself. `health.py`'s `_queue_worker_readiness` filters ping replies by hostname
+  (excluding anything containing `"llm-worker"`) specifically so an LLM-worker outage can never be
   misreported as route-worker readiness, or vice versa — this was a real bug caught while
   verifying ticket 1 of `docs/llm-feature-tickets.md` against a real Compose stack (readiness
-  reported `200` with the routing `worker` never started, only `llm-worker` running), not
-  something spotted by code review. Do not remove that filter, and if a third Celery app/worker is
+  reported `200` with the routing `worker` never started, only an LLM worker running), not
+  something spotted by code review. Do not remove that filter, and if another Celery app/worker is
   ever added on the same broker, give it a distinguishable hostname and extend the filter
   deliberately rather than assuming a bare `ping()` reply implies the *specific* worker you meant.
   The routing `worker` service is intentionally left without an explicit `hostname:` in
   `compose.yaml` because it is scaled (`--scale worker=2` in `scripts/run_grading_validation.sh`)
   — a fixed hostname on a scaled service would collide across replicas.
+- `llm-worker-fast` and `llm-worker-slow` are two separate Compose services/OS processes, each
+  bound to exactly one Celery queue (`-Q llm-fast` / `-Q llm-slow`) — not one worker listening to
+  `-Q llm-fast,llm-slow`. That was the original design (ticket 1); ticket 3's own integration test
+  proved it does not give fast jobs priority: `celery inspect active_queues` shows both queues
+  bound with `max_priority: None`, and a slow job enqueued first genuinely finished before three
+  fast jobs enqueued right after it. Do not "simplify" this back into one worker consuming both
+  queues — that reintroduces a proven bug, not a cleanup.
