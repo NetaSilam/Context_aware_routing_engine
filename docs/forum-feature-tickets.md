@@ -220,7 +220,8 @@ write path.
 **Blocked by:** 2. Deliver the core hazard-report feed; 3. Add forum/comment media upload and
 retrieval; 4. Deliver direct messaging.
 
-**Status:** ready-for-agent (media upload's limit already landed early, see below)
+**Status:** done (`backend/tests/test_forum_abuse_stack.py`, `abuse-api`/`forum-abuse-tests` in
+`compose.test.yaml`)
 
 - [x] Media uploads already have their own Redis-backed per-user/per-IP limit
       (`forum-media-upload` action, ticket 3) — shipped ahead of this ticket rather than leaving
@@ -232,12 +233,35 @@ retrieval; 4. Deliver direct messaging.
       ticket 4) — shipped alongside that ticket rather than leaving it unlimited in the meantime.
 - [x] `enforce_action_rate_limit` (shared by every action above) already sets `Retry-After` on
       every `429`.
-- [ ] Redis unavailability makes forum/DM writes fail closed with a controlled `503`; read-only
-      feed/history endpoints remain available from PostgreSQL where safe.
-- [ ] Numeric limits are validated configuration, not constants scattered through endpoints.
-- [ ] Integration/abuse tests prove rapid repeated posting/commenting/voting/messaging from one
-      user is bounded, and that a Redis outage produces the documented fail-closed behavior
-      rather than an unbounded queue or crash.
+- [x] Redis unavailability makes forum/DM writes fail closed with a controlled `503`; read-only
+      feed/history endpoints remain available from PostgreSQL where safe. This required no new
+      code: every forum/DM write handler already calls `enforce_action_rate_limit` (which raises
+      `503` with `Retry-After: 5` on `RedisError`, see `abuse_protection.py`) before touching the
+      database, and every forum/DM read handler (`list_posts`, `get_post`, `list_comments`,
+      `get_conversation`, `list_conversations`, `/me/dashboard`) never calls it at all — reads are
+      pure PostgreSQL + JWT-cookie auth, no Redis dependency. Proven, not assumed: see the new
+      integration tests below.
+- [x] Numeric limits are validated configuration: every forum/DM rate limit is a `Settings` field
+      in `config.py` with `ge`/`le` bounds plus a `model_validator` asserting the per-user limit
+      never exceeds the per-IP limit, not a constant scattered through endpoint code.
+- [x] `backend/tests/test_forum_abuse_stack.py` (new, `RUN_FORUM_ABUSE_INTEGRATION=true`) proves
+      both halves end-to-end against a real Docker Compose stack:
+      - Tight-limit tests run against the existing `abuse-api` service (now also given tight
+        `FORUM_POST_USER_RATE_LIMIT=2`/`FORUM_COMMENT_USER_RATE_LIMIT=2`/
+        `FORUM_VOTE_USER_RATE_LIMIT=2`/`DM_SEND_USER_RATE_LIMIT=2`, IP limits left generous) and
+        assert rapid repeated posting/commenting/voting/messaging from one user gets bounded by a
+        `429` with `Retry-After`.
+      - Fail-closed tests reuse the existing `geocoding-unavailable-api` service (its `REDIS_URL`
+        genuinely points at the unreachable `unavailable-redis` host — the same service the
+        pre-existing `abuse-tests` Redis-outage test uses via `ABUSE_UNAVAILABLE_API_URL`, chosen
+        over `queue-unavailable-api` because that service's `REDIS_URL` is a working Redis and
+        only its Celery broker URL is down, which doesn't exercise `enforce_action_rate_limit`
+        fail-closed at all). Because signup is itself Redis-rate-limited, every test signs up
+        through the working `abuse-api` instance first and reuses that JWT cookie against
+        `geocoding-unavailable-api` — both share the same `JWT_SECRET` and database — to isolate
+        the outage's effect to the specific write call under test.
+      - A new `forum-abuse-tests` Compose service (`compose.test.yaml`) runs this file against
+        `abuse-api` + `geocoding-unavailable-api`; added to `scripts/run_grading_validation.sh`.
 
 ## 7. Cold-seed forum demo data
 

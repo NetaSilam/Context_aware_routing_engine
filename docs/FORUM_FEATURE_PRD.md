@@ -225,7 +225,12 @@ grading.
 12. **Fail-closed Redis dependency.** Forum writes (post/comment/vote/DM/media) fail closed with a
     controlled `503` when Redis-backed rate limiting is unavailable, matching the existing
     routing/auth behavior. Read-only feed/history endpoints remain available from PostgreSQL
-    where safe.
+    where safe. Proven (not just designed) by `backend/tests/test_forum_abuse_stack.py`: tight
+    per-user limits on the shared `abuse-api` Compose test service show rapid repeated
+    posting/commenting/voting/messaging returns `429`+`Retry-After`, and the existing
+    `geocoding-unavailable-api` service (genuinely broken `REDIS_URL`, already reused by the
+    route-job abuse tests) shows forum/DM writes return `503`+`Retry-After: 5` while feed/post/
+    comment/conversation reads stay `200`.
 
 13. **Notification rows.** A notification row is created for: a new DM to a recipient, a new
     upvote/downvote on a user's post/comment, and a new comment on a user's post. Each row stores

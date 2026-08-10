@@ -5,7 +5,7 @@ base_project="road-risk-validation-${USER:-runner}-$$"
 services=(
   unit-tests frontend-tests foundation-tests risk-data-tests corridor-matcher-tests
   osrm-contract-tests route-job-tests route-history-tests geocoding-tests auth-tests
-  forum-tests forum-seed-tests messages-tests notifications-tests abuse-tests gateway-tests e2e-tests stress-tests
+  forum-tests forum-seed-tests messages-tests notifications-tests abuse-tests forum-abuse-tests gateway-tests e2e-tests stress-tests
 )
 
 run_service() {

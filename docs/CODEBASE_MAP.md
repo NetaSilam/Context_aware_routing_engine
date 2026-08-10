@@ -193,12 +193,16 @@ Startup is deliberately split into stages:
   `test_forum_routes.py`, `test_forum_media.py`, `test_messages_routes.py`, and
   `test_notifications_service.py` (pure vote/serialization/media-validation logic, no database)
   and `test_forum_stack.py`/`test_forum_media_stack.py`/`test_messages_stack.py`/
-  `test_notifications_stack.py`/`test_forum_seed_stack.py` (real PostgreSQL/Redis/disk
-  integration: CRUD, ownership, anonymity leak checks, vote counters, the dashboard aggregate,
-  media upload/retrieval/size/type/ownership/count-cap behavior, DM sending/pagination/
-  read-receipts/cross-user isolation, notification creation/anonymity/read-state — including one
-  test that opens a real Server-Sent Events connection and asserts a live event arrives — and
-  cold-seed idempotency by running the seed CLI twice and diffing the row-count report).
+  `test_notifications_stack.py`/`test_forum_seed_stack.py`/`test_forum_abuse_stack.py` (real
+  PostgreSQL/Redis/disk integration: CRUD, ownership, anonymity leak checks, vote counters, the
+  dashboard aggregate, media upload/retrieval/size/type/ownership/count-cap behavior, DM sending/
+  pagination/read-receipts/cross-user isolation, notification creation/anonymity/read-state —
+  including one test that opens a real Server-Sent Events connection and asserts a live event
+  arrives — cold-seed idempotency by running the seed CLI twice and diffing the row-count report,
+  and forum/DM abuse protection: rapid posting/commenting/voting/messaging from one user gets
+  bounded by `429`+`Retry-After` against the tightened `abuse-api` service, and a genuine Redis
+  outage (the `geocoding-unavailable-api` service) makes forum/DM writes fail closed with
+  `503`+`Retry-After` while feed/post/comment/conversation reads stay available).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
@@ -209,7 +213,8 @@ Startup is deliberately split into stages:
 - `frontend/e2e/route-journey.mjs` covers the browser route journey.
 - `backend/tests/stress/locustfile.py` covers concurrent and abusive request behavior.
 - `scripts/run_grading_validation.sh` is the complete isolated validation entry point, running one
-  Compose test service per feature area (see `compose.test.yaml`, e.g. `forum-tests`) in sequence.
+  Compose test service per feature area (see `compose.test.yaml`, e.g. `forum-tests`,
+  `forum-abuse-tests`) in sequence.
   A dedicated `GRADING_VALIDATION.md` evidence report does not currently exist in `docs/` — see
   `docs/DOCUMENTATION_GUIDE.md`'s "Known documentation drift" section before assuming otherwise.
 
