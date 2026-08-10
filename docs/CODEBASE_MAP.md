@@ -113,6 +113,12 @@ Startup is deliberately split into stages:
   Migration `0007_llm_jobs.py` adds `app.llm_jobs` and nullable classification columns on
   `app.forum_posts`; `app.route_jobs` gets no new column (see the PRD's decision on why the
   explanation is merged into the existing `result` column instead).
+- `backend/app/llm/client.py` is the only module in the codebase that calls Google Gemini —
+  `classify_report`/`compare_for_duplicate`/`explain_route`, each gated by `settings.testing`
+  (real HTTP call via `httpx.AsyncClient` when false; a fixed or input-derived deterministic value
+  when true, with no `httpx` construction at all on that path). All three raise `LlmError` (or the
+  more specific `LlmNotConfiguredError`) on any provider failure, malformed response, or missing
+  `GEMINI_API_KEY` — never a raw `httpx`/parsing exception.
 
 ### Route execution
 
@@ -224,7 +230,11 @@ Startup is deliberately split into stages:
   real `llm-worker` service responds to a Celery health ping. `test_health.py` unit-tests
   `_queue_worker_readiness`'s hostname filter directly (fake `Celery`/`get_redis`, no real infra
   needed) — a ping reply containing only an `llm-worker` hostname must not satisfy route-worker
-  readiness, and a reply that also contains a genuine route-worker hostname must.
+  readiness, and a reply that also contains a genuine route-worker hostname must. `test_llm_client.py`
+  unit-tests `app/llm/client.py` entirely without real infra: `httpx.MockTransport` stands in for
+  Gemini on the real-call path (well-formed/malformed responses, non-2xx status, missing fields),
+  and the mocked (`settings.testing`) path is proven to never construct `httpx.AsyncClient` at all
+  by monkeypatching it to raise if called.
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client

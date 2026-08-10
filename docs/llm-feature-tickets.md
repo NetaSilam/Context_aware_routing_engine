@@ -56,24 +56,33 @@ gate that keeps every automated test from ever making it for real.
 
 **Blocked by:** 1. Add LLM job schema and a physically separate Celery queue.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/app/llm/client.py`, `backend/tests/test_llm_client.py`)
 
-- [ ] `classify_report(body, hazard_type, coordinates) -> {hazard_type_suggested, severity}` calls
-      Gemini's REST `generateContent` endpoint via `httpx.AsyncClient` when `settings.testing` is
-      false; when true, returns a fixed deterministic value without constructing a request (PRD
-      decisions 1, 7).
-- [ ] `compare_for_duplicate(report_a, report_b) -> {is_duplicate, confidence}` follows the same
-      real/mocked branching.
-- [ ] `explain_route(cost_breakdown, user_context) -> str` follows the same real/mocked branching
-      (PRD decision 11) — added in this ticket even though ticket 7 is what wires it in, so the
+- [x] `classify_report(body, hazard_type, coordinates) -> TriageResult` calls Gemini's REST
+      `generateContent` endpoint via `httpx.AsyncClient` when `settings.testing` is false; when
+      true, returns a fixed deterministic value (`hazard_type_suggested` echoes the input,
+      `severity="medium"`) without constructing a request (PRD decisions 1, 7).
+- [x] `compare_for_duplicate(report_a, report_b) -> DuplicateJudgment` follows the same
+      real/mocked branching. Its mock is not a dead constant: it case/whitespace-insensitively
+      compares the two report bodies, so ticket 5's tests can exercise both the "confirmed
+      duplicate" and "not a duplicate" paths deterministically without a real API call.
+- [x] `explain_route(cost_breakdown, user_context) -> str` follows the same real/mocked branching
+      (PRD decision 11) — shipped in this ticket even though ticket 7 is what wires it in, so the
       client module ships with all three call shapes together.
-- [ ] Response parsing validates the provider's JSON shape and raises a typed error on malformed
-      output rather than propagating a raw parse exception.
-- [ ] Unit tests cover response parsing/validation against fixed sample payloads, and confirm the
-      mocked path never imports/calls anything network-related (importing `httpx`'s transport is
-      not exercised when `settings.testing` is true).
-- [ ] A dedicated test asserts each real-call function raises when `settings.testing` is false and
-      `gemini_api_key` is unset — checked lazily inside the client, not via a `Settings`
+- [x] Response parsing validates the provider's JSON shape (`TriageResult`/`DuplicateJudgment`
+      Pydantic models, plus an explicit `explanation` string check for the route-explanation call)
+      and raises `LlmError` — never a raw `httpx`/`KeyError`/`ValidationError` — on malformed
+      output, an HTTP error status, or an unreachable provider.
+- [x] Unit tests (`test_llm_client.py`, 11 cases, no real infra) cover response parsing/validation
+      against fixed sample payloads (well-formed, malformed field values, missing `candidates`,
+      non-2xx status, a route explanation missing its `explanation` key) via `httpx.MockTransport`
+      swapped in for the real transport, and confirm the mocked path never imports/calls anything
+      network-related by monkeypatching `httpx.AsyncClient` to raise `AssertionError` if
+      constructed at all — verified with a negative control (temporarily forcing the mock branch
+      to fall through made that specific test fail for the right reason, then reverted).
+- [x] A dedicated parametrized test asserts each of the three real-call functions raises
+      `LlmNotConfiguredError` when `settings.testing` is false and `gemini_api_key` is unset —
+      checked lazily inside the client (`_require_real_call_configured`), not via a `Settings`
       cross-field validator (PRD decision 8).
 
 ## 3. Add the fill-time heuristic and fast/slow queue routing
