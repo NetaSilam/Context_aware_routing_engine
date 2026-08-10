@@ -12,26 +12,42 @@ somewhere to enqueue work without sharing the routing queue.
 
 **Blocked by:** None — can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/alembic/versions/0007_llm_jobs.py`, `backend/app/llm/tasks.py`)
 
-- [ ] Alembic migration adds `app.llm_jobs` (`id`, `kind` — `triage`/`dedup_check`/
+- [x] Alembic migration adds `app.llm_jobs` (`id`, `kind` — `triage`/`dedup_check`/
       `route_explanation`, `subject_post_id` nullable, `subject_route_job_id` nullable
       references `app.route_jobs.id`, `status`, `queue_name`, `estimated_duration_ms`, `result`
-      jsonb, `error`, `created_at`, `completed_at`) and adds nullable `llm_hazard_type_suggested`,
+      jsonb, `error`, `created_at`, `completed_at`, plus a `CHECK` tying `kind` to which
+      `subject_*` column must be set) and adds nullable `llm_hazard_type_suggested`,
       `llm_severity`, `duplicate_of_post_id` columns to `app.forum_posts` (PRD decision 3).
       `app.route_jobs` gets no new column — its explanation is merged into the existing `result`
       jsonb column it already writes candidates/chosen_index into, not the `snapshot` column,
       which holds the request inputs (PRD decision 11).
-- [ ] `app/llm/tasks.py` defines its own `Celery("road-risk-llm-worker", ...)` app with
-      `task_routes` sending work to `llm-fast`/`llm-slow` queues (PRD decision 2).
-- [ ] `compose.yaml` gains an `llm-worker` service running
+- [x] `app/llm/tasks.py` defines its own `Celery("road-risk-llm-worker", ...)` app. No static
+      `task_routes` table — queue assignment happens per enqueue call once the fill-time heuristic
+      lands (ticket 3); this ticket only ships the app/worker skeleton (PRD decision 2, revised
+      from an earlier draft that incorrectly described static `task_routes`).
+- [x] `compose.yaml` gains an `llm-worker` service (`hostname: llm-worker`, not scaled) running
       `celery -A app.llm.tasks.celery_app worker -Q llm-fast,llm-slow`, separate from the existing
       `worker` service, which is untouched.
-- [ ] New validated `Settings` fields: `gemini_api_key` (required unless `testing`),
-      `llm_fast_queue_max_estimated_ms`, `llm_dedup_lookback_days`, `llm_dedup_radius_meters`,
-      `llm_worker_concurrency` (PRD decision 8).
-- [ ] The migration and new worker service are verified against a real Docker Compose stack
-      (clean boot, migration applies, `llm-worker` starts and can be pinged), not just reviewed.
+- [x] New `Settings` fields: `gemini_api_key` (`str | None`, genuinely optional at the Settings
+      level — no cross-field validator requiring it, since ~30 existing test services never set
+      `TESTING`/`GEMINI_API_KEY` and would otherwise fail to construct `Settings` at all; caught
+      before implementation by checking `compose.test.yaml` directly, not assumed; see PRD
+      decision 8), plus validated `llm_fast_queue_max_estimated_ms`, `llm_dedup_lookback_days`,
+      `llm_dedup_radius_meters`, `llm_dedup_candidate_limit`, `llm_worker_concurrency`.
+- [x] The migration and new worker service are verified against a real Docker Compose stack
+      (clean boot, migration applies, `llm-worker` starts and responds to a Celery ping via
+      `test_llm_stack.py`) — not just reviewed. This surfaced a real, unrelated regression: since
+      `llm-worker` shares the routing worker's Redis broker, `Celery.control.inspect().ping()`
+      (used by `/health/ready`'s `queue_worker` check) started replying with `llm-worker`'s pong
+      even when the real routing `worker` was never started — readiness reported `200` with no
+      route worker alive. Fixed in `app/health.py`'s `_queue_worker_readiness` by filtering ping
+      replies to exclude any hostname containing `"llm-worker"`; proven both by manually starting/
+      stopping each worker against a real Compose stack and by two new unit tests in
+      `test_health.py` (fake `Celery`/`get_redis`) verified with a negative control (reverting the
+      filter made both new tests fail as expected, then restored). See `docs/CODEBASE_MAP.md`'s
+      "Important boundaries" for the permanent record of this constraint.
 
 ## 2. Add the Gemini client with a deterministic test-mode gate
 
@@ -56,8 +72,9 @@ gate that keeps every automated test from ever making it for real.
 - [ ] Unit tests cover response parsing/validation against fixed sample payloads, and confirm the
       mocked path never imports/calls anything network-related (importing `httpx`'s transport is
       not exercised when `settings.testing` is true).
-- [ ] A dedicated test asserts `GEMINI_API_KEY` is required (config validation fails closed) when
-      `testing` is false and the key is unset.
+- [ ] A dedicated test asserts each real-call function raises when `settings.testing` is false and
+      `gemini_api_key` is unset — checked lazily inside the client, not via a `Settings`
+      cross-field validator (PRD decision 8).
 
 ## 3. Add the fill-time heuristic and fast/slow queue routing
 

@@ -105,6 +105,14 @@ Startup is deliberately split into stages:
   and the `GET /api/notifications/stream` Server-Sent Events endpoint. Cold seeding is designed
   in `docs/FORUM_FEATURE_PRD.md` but not yet implemented; see `docs/forum-feature-tickets.md` for
   status.
+- `backend/app/llm/tasks.py` defines a Celery app (`llm-worker`, service in `compose.yaml`)
+  physically separate from the routing worker's, sharing the same Redis broker but never the same
+  queue names (`llm-fast`/`llm-slow` vs. the routing worker's default queue) — see
+  `docs/LLM_FEATURE_PRD.md` for the hazard-report triage/dedup and route-explanation features this
+  queue exists to serve, and `docs/llm-feature-tickets.md` for what is implemented versus planned.
+  Migration `0007_llm_jobs.py` adds `app.llm_jobs` and nullable classification columns on
+  `app.forum_posts`; `app.route_jobs` gets no new column (see the PRD's decision on why the
+  explanation is merged into the existing `result` column instead).
 
 ### Route execution
 
@@ -211,6 +219,12 @@ Startup is deliberately split into stages:
   in-process `TestClient(create_app())` run creates a post/comment/DM/media upload with
   distinctive marker strings and asserts none of them appear in `capfd`-captured process
   stdout/stderr).
+- `test_llm_stack.py` (real PostgreSQL/Redis/Celery integration) proves the `0007_llm_jobs.py`
+  migration's shape (including the `kind`/`subject_*` consistency `CHECK` constraint) and that the
+  real `llm-worker` service responds to a Celery health ping. `test_health.py` unit-tests
+  `_queue_worker_readiness`'s hostname filter directly (fake `Celery`/`get_redis`, no real infra
+  needed) — a ping reply containing only an `llm-worker` hostname must not satisfy route-worker
+  readiness, and a reply that also contains a genuine route-worker hostname must.
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
@@ -283,3 +297,17 @@ Startup is deliberately split into stages:
   `app/routing/route_jobs.py`'s `log_route_event` already does — from a different module, and
   update `test_forum_security.py`'s watched-module logic deliberately rather than working around
   the check.
+- `app/llm/tasks.py`'s Celery app (`llm-worker`) shares the same Redis broker as
+  `app/routing/route_job_tasks.py`'s (`worker`) — deliberately, to avoid a second broker, but this
+  means `Celery.control.inspect().ping()` broadcasts to *both* and cannot tell them apart by
+  itself. `health.py`'s `_queue_worker_readiness` filters ping replies by hostname (excluding
+  anything containing `"llm-worker"`) specifically so an `llm-worker` outage can never be
+  misreported as route-worker readiness, or vice versa — this was a real bug caught while
+  verifying ticket 1 of `docs/llm-feature-tickets.md` against a real Compose stack (readiness
+  reported `200` with the routing `worker` never started, only `llm-worker` running), not
+  something spotted by code review. Do not remove that filter, and if a third Celery app/worker is
+  ever added on the same broker, give it a distinguishable hostname and extend the filter
+  deliberately rather than assuming a bare `ping()` reply implies the *specific* worker you meant.
+  The routing `worker` service is intentionally left without an explicit `hostname:` in
+  `compose.yaml` because it is scaled (`--scale worker=2` in `scripts/run_grading_validation.sh`)
+  — a fixed hostname on a scaled service would collide across replicas.

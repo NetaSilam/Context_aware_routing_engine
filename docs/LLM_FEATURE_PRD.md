@@ -107,11 +107,15 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    `generateContent` endpoint directly — no new SDK dependency, consistent with how
    `geocoding/client.py` calls Nominatim and `routing/osrm_client.py` calls OSRM.
 2. **Queue separation.** `app/llm/tasks.py` defines its own `Celery("road-risk-llm-worker", ...)`
-   app (mirroring `route_job_tasks.py`'s `celery_app`) with `task_routes` sending everything to
-   `llm-fast` or `llm-slow` queues. A new `llm-worker` Compose service runs
-   `celery -A app.llm.tasks.celery_app worker -Q llm-fast,llm-slow --loglevel=INFO` (queue order
-   matters — Celery drains listed queues in order, giving fast jobs priority). The existing
-   `worker` service is untouched and continues to own only the routing queue.
+   app (mirroring `route_job_tasks.py`'s `celery_app`), with one task function per `kind`. Queue
+   assignment is **per-call, not static routing**: the enqueue site computes
+   `estimate_duration_ms(...)` (ticket 3) and passes `queue="llm-fast"` or `"llm-slow"` explicitly
+   to `.apply_async(...)` — a static `task_routes` table keyed by task name cannot express "this
+   specific triage call, because its body happens to be long, goes to the slow queue," which is
+   exactly the behavior the fill-time heuristic requirement asks for. A new `llm-worker` Compose
+   service runs `celery -A app.llm.tasks.celery_app worker -Q llm-fast,llm-slow --loglevel=INFO`
+   (queue order matters — Celery drains listed queues in order, giving fast jobs priority). The
+   existing `worker` service is untouched and continues to own only the routing queue.
 3. **Schema.** `app.llm_jobs`: `id (uuid)`, `kind` (`triage` | `dedup_check` | `route_explanation`),
    `subject_post_id` (nullable — unused for `route_explanation`), `subject_route_job_id` (nullable
    — unused for `triage`/`dedup_check`, references `app.route_jobs.id`), `status`
@@ -145,14 +149,29 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    section rather than presenting one fail-mode philosophy as universal.
 7. **Testing gate.** `settings.testing` (the same field already gating
    `app/routing/test_scoring_router.py`'s registration in `main.py`) gates
-   `app/llm/client.py`'s real HTTP call: when true, `classify_report`/`compare_for_duplicate`
-   return fixed, deterministic values without constructing a request. All Compose test services
-   set `TESTING: "true"`, matching the existing `worker` service's test environment.
-8. **Configuration.** New validated `Settings` fields: `gemini_api_key` (`str | None`, required
-   only when `testing` is false — enforced by a `model_validator`, not a runtime `None` check
-   scattered through the client), `llm_fast_queue_max_estimated_ms`, `llm_dedup_lookback_days`,
-   `llm_dedup_radius_meters`, `llm_worker_concurrency`. Same pattern as every other feature's
-   settings block in `config.py` — no committed usable defaults for the secret.
+   `app/llm/client.py`'s real HTTP call: when true, `classify_report`/`compare_for_duplicate`/
+   `explain_route` return fixed, deterministic values without constructing a request. Only the
+   Compose services that actually reach LLM-calling code paths need `TESTING: "true"` set — in
+   practice `llm-worker` and any test service exercising it — not every service in
+   `compose.test.yaml` (most never construct an LLM client at all).
+8. **Configuration.** New `Settings` fields: `gemini_api_key` (`str | None`, no cross-field
+   `model_validator` requiring it). This is a deliberate correction from an earlier draft of this
+   decision: every other secret in `config.py` (`jwt_secret`, `database_url`, ...) is required in
+   *every* environment via a plain non-optional field, with test environments supplying a dummy
+   value through `.env.test` — but `.env.test` only reaches a container if that container's
+   Compose `environment:` block references the variable, and ~30 existing test services in
+   `compose.test.yaml` construct `Settings`/`get_settings()` (directly or via `create_app()`)
+   without ever referencing `GEMINI_API_KEY` or setting `TESTING`. A `model_validator` requiring
+   the key whenever `testing` is false would have broken `get_settings()` for every one of those
+   unrelated services — this was caught before implementation, not after, by checking
+   `compose.test.yaml` directly rather than assuming the existing `TESTING`/secret-requirement
+   patterns generalized cleanly to a new optional integration. The key is instead checked lazily,
+   only inside `app/llm/client.py`, only on the code path that would actually make a real network
+   call (`if not settings.testing and not settings.gemini_api_key: raise ...`) — scoped exactly to
+   where the requirement is real, not to every process that happens to import `app.config`.
+   `llm_fast_queue_max_estimated_ms`, `llm_dedup_lookback_days`, `llm_dedup_radius_meters`,
+   `llm_dedup_candidate_limit`, `llm_worker_concurrency` remain validated `Settings` fields with
+   sensible defaults, same pattern as every other feature's tunables in `config.py`.
 9. **Anonymity boundary.** The LLM never receives author identity — only report body, hazard type,
    and coordinates are sent, regardless of `is_anonymous`. This is not a new anonymity mechanism;
    it is simply that classification never needed author identity in the first place, so there is
