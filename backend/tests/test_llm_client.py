@@ -9,6 +9,7 @@ from app import llm as llm_package  # noqa: F401  (ensures app.llm package impor
 from app.config import Settings
 from app.llm import client as llm_client
 from app.llm.client import (
+    TEST_FAILURE_MARKER,
     LlmError,
     LlmNotConfiguredError,
     classify_report,
@@ -95,6 +96,34 @@ def test_explain_route_mock_path_never_touches_network(monkeypatch: pytest.Monke
 
     assert isinstance(explanation, str)
     assert explanation.strip()
+
+
+# --- deterministic mock-path failure simulation (mirrors route_job_tasks.py's
+# _test_crash_once marker convention), used by ticket 4+'s fail-open integration tests ---
+
+
+def test_classify_report_mock_path_can_simulate_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm_client, "get_settings", lambda: _settings(testing=True))
+    _forbid_network(monkeypatch)
+
+    with pytest.raises(LlmError, match="Simulated provider failure"):
+        asyncio.run(classify_report(f"Deep pothole {TEST_FAILURE_MARKER}", "pothole", None))
+
+
+def test_compare_for_duplicate_mock_path_can_simulate_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm_client, "get_settings", lambda: _settings(testing=True))
+    _forbid_network(monkeypatch)
+
+    with pytest.raises(LlmError, match="Simulated provider failure"):
+        asyncio.run(compare_for_duplicate(f"a {TEST_FAILURE_MARKER}", "b"))
+
+
+def test_explain_route_mock_path_can_simulate_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm_client, "get_settings", lambda: _settings(testing=True))
+    _forbid_network(monkeypatch)
+
+    with pytest.raises(LlmError, match="Simulated provider failure"):
+        asyncio.run(explain_route({"marker": TEST_FAILURE_MARKER}, {}))
 
 
 # --- real-call path requires configuration ---

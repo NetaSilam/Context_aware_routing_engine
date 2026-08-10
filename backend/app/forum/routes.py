@@ -16,6 +16,7 @@ from app.auth import get_current_user, require_trusted_origin
 from app.config import get_settings
 from app.db import get_engine
 from app.forum.media_storage import classify_and_validate_media, read_media_file, write_media_file
+from app.llm.service import create_llm_job, enqueue_llm_job
 from app.notifications.service import create_notification, publish_notification
 from app.redis_client import get_redis
 from app.request_bounds import reject_unexpected_query_parameters
@@ -89,6 +90,9 @@ class PostSummary(BaseModel):
     downvote_count: int
     comment_count: int
     my_vote: VoteValue
+    llm_hazard_type_suggested: str | None
+    llm_severity: str | None
+    duplicate_of_post_id: UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -167,6 +171,9 @@ def _serialize_post(row: Any, viewer_id: int, *, media: list[Any] | None = None)
         "downvote_count": row["downvote_count"],
         "comment_count": row["comment_count"],
         "my_vote": _vote_label(row["my_vote_value"]),
+        "llm_hazard_type_suggested": row["llm_hazard_type_suggested"],
+        "llm_severity": row["llm_severity"],
+        "duplicate_of_post_id": row["duplicate_of_post_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -262,6 +269,7 @@ async def create_post(
         ip_limit=settings.forum_post_ip_rate_limit,
     )
     post_id = uuid4()
+    llm_job: dict[str, Any] | None = None
     try:
         async with get_engine().begin() as connection:
             row = (
@@ -276,7 +284,8 @@ async def create_post(
                              :longitude, :latitude)
                         RETURNING id, author_user_id, is_anonymous, hazard_type, title, body,
                                   longitude, latitude, upvote_count, downvote_count,
-                                  comment_count, created_at, updated_at
+                                  comment_count, llm_hazard_type_suggested, llm_severity,
+                                  duplicate_of_post_id, created_at, updated_at
                         """
                     ),
                     {
@@ -291,8 +300,20 @@ async def create_post(
                     },
                 )
             ).mappings().one()
+            llm_job = await create_llm_job(
+                connection, kind="triage", subject_post_id=post_id, input_chars=len(payload.body)
+            )
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
+    if llm_job is not None:
+        try:
+            enqueue_llm_job(llm_job)
+        except Exception:
+            # Fail-open (PRD decision 6, docs/LLM_FEATURE_PRD.md): the post was already
+            # committed successfully. A broker outage at this exact instant must never turn a
+            # successful creation into an error response — the job row simply stays 'queued'
+            # rather than ever running; classification is enrichment, not load-bearing.
+            pass
     return _serialize_post(
         {**row, "author_email": user["email"], "my_vote_value": None}, int(user["id"])
     )
@@ -317,6 +338,7 @@ async def list_posts(
                         SELECT p.id, p.author_user_id, u.email AS author_email, p.is_anonymous,
                                p.hazard_type, p.title, p.longitude, p.latitude,
                                p.upvote_count, p.downvote_count, p.comment_count,
+                               p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
                                p.created_at, p.updated_at, v.value AS my_vote_value
                         FROM app.forum_posts p
                         JOIN app.users u ON u.id = p.author_user_id
@@ -360,6 +382,7 @@ async def get_post(
                         SELECT p.id, p.author_user_id, u.email AS author_email, p.is_anonymous,
                                p.hazard_type, p.title, p.body, p.longitude, p.latitude,
                                p.upvote_count, p.downvote_count, p.comment_count,
+                               p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
                                p.created_at, p.updated_at, v.value AS my_vote_value
                         FROM app.forum_posts p
                         JOIN app.users u ON u.id = p.author_user_id
@@ -413,6 +436,7 @@ async def update_post(
                         SELECT p.id, p.author_user_id, u.email AS author_email, p.is_anonymous,
                                p.hazard_type, p.title, p.body, p.longitude, p.latitude,
                                p.upvote_count, p.downvote_count, p.comment_count,
+                               p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
                                p.created_at, p.updated_at, v.value AS my_vote_value
                         FROM app.forum_posts p
                         JOIN app.users u ON u.id = p.author_user_id

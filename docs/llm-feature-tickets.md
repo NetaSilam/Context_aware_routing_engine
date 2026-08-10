@@ -141,20 +141,40 @@ LLM-suggested `hazard_type`/`severity`.
 
 **Blocked by:** 2. Add the Gemini client; 3. Add the fill-time heuristic.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/app/forum/routes.py`, `backend/app/llm/tasks.py`,
+`backend/tests/test_llm_triage_stack.py`)
 
-- [ ] `create_post` (in `app/forum/routes.py`) enqueues a `triage` job referencing the new post
-      after its transaction commits (same after-commit pattern as notifications, PRD decision 5).
-- [ ] `run_llm_job`'s `triage` dispatch (consumed by `llm-worker-fast`, per ticket 3's estimate —
-      a single report is always a fast job) calls `classify_report`, writes the result onto
-      `llm_jobs`/the post's new columns, and marks the job `completed`.
-- [ ] A provider error or timeout marks the job `failed` and leaves the post fully visible and
-      functional, unclassified (PRD decision 6, fail-open) — verified with the mock simulating a
-      failure, not just asserted from the code.
-- [ ] `PostDetail`/`PostSummary` API responses include the new nullable classification fields.
-- [ ] Integration test: create a post, wait for the triage job to complete against the real
-      disposable stack, assert the post's classification fields are populated from the (mocked)
-      response.
+- [x] `create_post` (in `app/forum/routes.py`) calls `create_llm_job(connection, kind="triage",
+      subject_post_id=post_id, input_chars=len(body))` inside the same transaction as the INSERT,
+      then `enqueue_llm_job(job)` after it commits (same after-commit pattern as notifications,
+      PRD decision 5) — wrapped in its own `try/except Exception: pass`, since a broker outage at
+      that exact instant must never turn an already-successful post creation into an error
+      response (the job simply stays `queued` forever rather than the request failing).
+- [x] `run_llm_job` (in `app/llm/tasks.py`) now dispatches by `kind`: `triage` loads the post's
+      `body`/`hazard_type`/coordinates, calls `classify_report` (via `asyncio.run`, since the
+      Celery task itself is synchronous — same worker-side sync/async bridge pattern as elsewhere
+      in this codebase), and writes the result onto both `llm_jobs.result` and the post's
+      `llm_hazard_type_suggested`/`llm_severity` columns. `dedup_check`/`route_explanation` still
+      use ticket 3's placeholder body until tickets 5/7 land.
+- [x] A provider error or timeout marks the job `failed` (with the exception message, truncated)
+      and leaves the post fully visible and functional, unclassified (PRD decision 6, fail-open).
+      Verified with a real simulated failure, not just asserted from the code: `app/llm/client.py`
+      gained a `TEST_FAILURE_MARKER` constant (mirroring `route_job_tasks.py`'s `_test_crash_once`
+      convention) — when `settings.testing` is true and a report body contains that marker, the
+      mock path raises instead of returning a canned result, letting an integration test exercise
+      the real failure path end-to-end without needing a real provider outage.
+- [x] `PostSummary` (inherited by `PostDetail`) gained nullable `llm_hazard_type_suggested`,
+      `llm_severity`, `duplicate_of_post_id` fields; `create_post`'s `RETURNING` and `list_posts`/
+      `get_post`/`update_post`'s `SELECT`s all select the three new columns so `_serialize_post`
+      never KeyErrors — caught immediately by the existing `test_forum_routes.py` unit tests,
+      whose hand-built row fixtures didn't have the new keys either, fixed alongside a new
+      `test_serialize_post_includes_llm_classification_fields` test.
+- [x] Integration tests (`test_llm_triage_stack.py`, verified against a real disposable stack):
+      creating a post leaves it unclassified in the immediate response, then — polling
+      `app.llm_jobs` directly rather than sleeping a fixed duration — its classification appears
+      once the triage job completes; a post whose body carries `TEST_FAILURE_MARKER` gets a
+      `failed` job but remains fully visible (in both the detail fetch and the feed) with its
+      classification fields still `null`.
 
 ## 5. Deliver near-duplicate detection and flagging
 

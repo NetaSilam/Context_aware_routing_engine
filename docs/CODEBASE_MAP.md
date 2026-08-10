@@ -86,10 +86,15 @@ Startup is deliberately split into stages:
 - `backend/app/forum/routes.py` implements the hazard-reporting forum: post/comment CRUD,
   anonymity-filtered serialization, up/down/none voting with atomically maintained counters, and
   image/video media upload/retrieval for posts and comments (also serves direct-message media,
-  see below). Requests are ordinary synchronous FastAPI/PostgreSQL work (no Celery task), since
-  posting, commenting, voting, and uploading are bounded writes unlike OSRM/PostGIS route
-  scoring. `backend/app/forum/media_storage.py` owns media content-type/size classification and
-  the disk read/write helpers backing that volume.
+  see below). The request/response cycle itself is ordinary synchronous FastAPI/PostgreSQL work
+  (no Celery task in the request path), since posting, commenting, voting, and uploading are
+  bounded writes unlike OSRM/PostGIS route scoring — `create_post` additionally enqueues an
+  async LLM `triage` job (`app/llm/service.py`'s `create_llm_job`/`enqueue_llm_job`) after its own
+  transaction commits, but does not wait for it; the post is created and returned unclassified,
+  with `llm_hazard_type_suggested`/`llm_severity`/`duplicate_of_post_id` populated later once
+  `llm-worker-fast` processes the job (see `docs/LLM_FEATURE_PRD.md`). `backend/app/forum/
+  media_storage.py` owns media content-type/size classification and the disk read/write helpers
+  backing that volume.
 - `backend/app/messaging/routes.py` implements one-to-one direct messages: sending (with an
   optional single image/video attachment via the same `media_storage.py` helpers, in one
   multipart request rather than the forum's create-then-attach pattern), a paged conversation
@@ -248,6 +253,12 @@ Startup is deliberately split into stages:
   its own dedicated Redis db and short-lived worker subprocesses (not the standing
   `llm-worker-fast`/`llm-worker-slow` services) so no other consumer can race to grab a job first —
   this is the test that originally disproved the single-worker `-Q llm-fast,llm-slow` design.
+  `test_llm_triage_stack.py` proves the real end-to-end triage integration against the running
+  `api` + `llm-worker-fast` services: creating a post leaves it unclassified in the immediate
+  response, polling `app.llm_jobs` (not a fixed sleep) shows the classification appear once the
+  job completes, and a report body carrying `app.llm.client.TEST_FAILURE_MARKER` produces a
+  `failed` job while the post stays fully visible in both the detail fetch and the feed —
+  proving PRD decision 6's fail-open guarantee empirically, not just by code inspection.
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client

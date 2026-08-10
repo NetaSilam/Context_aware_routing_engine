@@ -30,6 +30,17 @@ class LlmNotConfiguredError(LlmError):
     """Raised when a real Gemini call is attempted without GEMINI_API_KEY set."""
 
 
+# Deterministic mock-path failure simulation, gated by settings.testing — mirrors
+# route_job_tasks.py's `_test_crash_once` marker convention for testing fail-open/fail-closed
+# behavior without depending on a real provider outage.
+TEST_FAILURE_MARKER = "__llm_test_force_failure__"
+
+
+def _raise_if_test_failure_requested(*texts: str) -> None:
+    if any(TEST_FAILURE_MARKER in text for text in texts):
+        raise LlmError("Simulated provider failure (test marker present).")
+
+
 class TriageResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -90,6 +101,7 @@ async def classify_report(
     body: str, hazard_type: HazardType, coordinates: tuple[float, float] | None
 ) -> TriageResult:
     if get_settings().testing:
+        _raise_if_test_failure_requested(body)
         return TriageResult(hazard_type_suggested=hazard_type, severity="medium")
     _require_real_call_configured()
     prompt = (
@@ -110,6 +122,7 @@ async def classify_report(
 
 async def compare_for_duplicate(report_a: str, report_b: str) -> DuplicateJudgment:
     if get_settings().testing:
+        _raise_if_test_failure_requested(report_a, report_b)
         is_duplicate = report_a.strip().casefold() == report_b.strip().casefold()
         return DuplicateJudgment(is_duplicate=is_duplicate, confidence=1.0 if is_duplicate else 0.0)
     _require_real_call_configured()
@@ -128,6 +141,9 @@ async def compare_for_duplicate(report_a: str, report_b: str) -> DuplicateJudgme
 
 async def explain_route(cost_breakdown: dict[str, Any], user_context: dict[str, Any]) -> str:
     if get_settings().testing:
+        _raise_if_test_failure_requested(
+            json.dumps(cost_breakdown, default=str), json.dumps(user_context, default=str)
+        )
         return "Deterministic test explanation."
     _require_real_call_configured()
     prompt = (
