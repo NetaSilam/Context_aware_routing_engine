@@ -91,7 +91,7 @@ describe("NotificationIndicator", () => {
 
   it("marks all notifications read and resets the badge when clicked", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith("/api/notifications?")) return Promise.resolve(jsonResponse(notificationPage(4)));
       if (url === "/api/notifications/read-all") return Promise.resolve(new Response(null, { status: 204 }));

@@ -304,21 +304,33 @@ feed.
 **Blocked by:** 2. Deliver the core hazard-report feed; 3. Add forum/comment media upload and
 retrieval; 4. Deliver direct messaging; 5. Deliver live notifications over Server-Sent Events.
 
-**Status:** ready-for-agent
+**Status:** done (`frontend/src/pages/ForumPage.tsx`, `frontend/src/pages/InboxPage.tsx`)
 
-- [ ] `ForumPage.tsx` renders the paged, filterable feed, a post-creation form (title, body,
+- [x] `ForumPage.tsx` renders the paged, filterable feed, a post-creation form (title, body,
       hazard type, location, anonymity toggle, media picker), post detail with comments, and
-      voting controls.
-- [ ] `InboxPage.tsx` renders the conversation list and an open thread with message composition,
-      media attachment, and read-state display.
-- [ ] Both pages are added to the existing `PageSwitcher`/`App.tsx` gated-by-login shell.
-- [ ] The session header shows a live-updating unread-notification indicator fed by the SSE
+      voting controls. Most of this landed incrementally across tickets 2-5; the one gap found on
+      audit was the location field, added this pass: `PostForm.tsx` gained optional
+      longitude/latitude number inputs (range-validated to match the backend's `-180..180`/
+      `-90..90` bounds) plus a "Use my current location" button backed by
+      `navigator.geolocation`, wired straight into the existing `CreatePostRequest.longitude`/
+      `.latitude` fields that were already plumbed through the API client but had no form control.
+- [x] `InboxPage.tsx` renders the conversation list and an open thread with message composition,
+      media attachment, and read-state display — confirmed complete on audit, no changes needed.
+- [x] Both pages are added to the existing `PageSwitcher`/`App.tsx` gated-by-login shell.
+- [x] The session header shows a live-updating unread-notification indicator fed by the SSE
       connection established once per signed-in session.
-- [ ] Typed API clients (`api/forum.ts`, `api/messages.ts`, `api/notifications.ts`) and matching
+- [x] Typed API clients (`api/forum.ts`, `api/messages.ts`, `api/notifications.ts`) and matching
       types under `types/` follow the existing client-plus-tests pattern.
-- [ ] Frontend tests cover feed rendering/paging/filtering, form validation, vote toggling, DM
-      thread rendering, and notification indicator updates, following the existing React Testing
-      Library/Vitest conventions.
+- [x] Frontend tests cover feed rendering/paging/filtering, form validation, vote toggling, DM
+      thread rendering, and notification indicator updates. Paging, hazard-type filtering, the new
+      location field, and a required-field validation test were missing on audit and added to
+      `ForumPage.test.tsx` (now 9 tests); DM thread rendering and notification indicator updates
+      were already covered by `InboxPage.test.tsx`/`NotificationIndicator.test.tsx`. Also fixed a
+      pre-existing production-build break (`tsc -b` — which typechecks test files too, unlike
+      `vitest run` — failed on an unused mock parameter in `NotificationIndicator.test.tsx`) found
+      while rebuilding the frontend container to verify the location field end-to-end against the
+      real local stack (signup → create post with `longitude`/`latitude` → confirmed in the API
+      response, then cleaned up the smoke-test row).
 
 ## 9. Extend security and stress validation to the forum
 

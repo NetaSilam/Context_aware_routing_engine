@@ -14,10 +14,20 @@ export default function PostForm(props: PostFormProps): JSX.Element {
   const [body, setBody] = useState("");
   const [hazardType, setHazardType] = useState<HazardType>("pothole");
   const [isAnonymous, setIsAnonymous] = useState(false);
+  const [longitude, setLongitude] = useState("");
+  const [latitude, setLatitude] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function useCurrentLocation() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition((position) => {
+      setLongitude(String(position.coords.longitude));
+      setLatitude(String(position.coords.latitude));
+    });
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -25,12 +35,21 @@ export default function PostForm(props: PostFormProps): JSX.Element {
     setSubmitting(true);
     try {
       await props.onSubmit(
-        { title, body, hazard_type: hazardType, is_anonymous: isAnonymous },
+        {
+          title,
+          body,
+          hazard_type: hazardType,
+          is_anonymous: isAnonymous,
+          longitude: longitude === "" ? undefined : Number(longitude),
+          latitude: latitude === "" ? undefined : Number(latitude),
+        },
         files,
       );
       setTitle("");
       setBody("");
       setIsAnonymous(false);
+      setLongitude("");
+      setLatitude("");
       setFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
@@ -72,6 +91,33 @@ export default function PostForm(props: PostFormProps): JSX.Element {
           onChange={(event) => setBody(event.target.value)}
         />
       </label>
+      <div className="forum-post-form__location">
+        <label>
+          Longitude (optional)
+          <input
+            type="number"
+            step="any"
+            min={-180}
+            max={180}
+            value={longitude}
+            onChange={(event) => setLongitude(event.target.value)}
+          />
+        </label>
+        <label>
+          Latitude (optional)
+          <input
+            type="number"
+            step="any"
+            min={-90}
+            max={90}
+            value={latitude}
+            onChange={(event) => setLatitude(event.target.value)}
+          />
+        </label>
+        <button type="button" className="ghost-button" onClick={useCurrentLocation}>
+          Use my current location
+        </button>
+      </div>
       <label>
         Photos or videos (optional)
         <input

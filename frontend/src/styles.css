@@ -640,6 +640,17 @@ input {
   gap: 8px !important;
 }
 
+.forum-post-form__location {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.forum-post-form__location label {
+  flex: 1 1 140px;
+}
+
 .forum-post-detail h2 {
   margin: 12px 0 4px;
 }

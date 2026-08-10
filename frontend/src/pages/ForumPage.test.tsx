@@ -58,6 +58,21 @@ describe("ForumPage", () => {
     expect(screen.getByText(/reporter@example.com/)).toBeTruthy();
   });
 
+  it("blocks submission until title and description are filled in", async () => {
+    const user = userEvent.setup();
+    const fetchMock = baseFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+    await screen.findByText("Deep pothole on Route 4");
+
+    await user.click(screen.getByRole("button", { name: "Report hazard" }));
+
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/forum/posts",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
   it("creates a new report and prepends it to the feed", async () => {
     const user = userEvent.setup();
     const fetchMock = baseFetchMock();
@@ -162,6 +177,106 @@ describe("ForumPage", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       `/api/forum/posts/${post.id}/vote`,
       expect.objectContaining({ method: "PUT", body: JSON.stringify({ value: "up" }) }),
+    ));
+  });
+
+  it("captures an optional location and submits it with the report", async () => {
+    const user = userEvent.setup();
+    const fetchMock = baseFetchMock();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.startsWith("/api/forum/posts?") && method === "GET") {
+        return Promise.resolve(jsonResponse({ items: [post], offset: 0, limit: 20, has_more: false }));
+      }
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url === "/api/forum/posts" && method === "POST") {
+        return Promise.resolve(jsonResponse(
+          { ...post, id: "22222222-2222-2222-2222-222222222222", title: "Flooded underpass", body: "Deep water.", media: [], longitude: 34.78, latitude: 32.07 },
+          201,
+        ));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+    await screen.findByText("Deep pothole on Route 4");
+
+    await user.type(screen.getByLabelText("Title"), "Flooded underpass");
+    await user.type(screen.getByLabelText("Description"), "Deep water.");
+    await user.type(screen.getByLabelText("Longitude (optional)"), "34.78");
+    await user.type(screen.getByLabelText("Latitude (optional)"), "32.07");
+    await user.click(screen.getByRole("button", { name: "Report hazard" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/forum/posts",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          title: "Flooded underpass",
+          body: "Deep water.",
+          hazard_type: "pothole",
+          is_anonymous: false,
+          longitude: 34.78,
+          latitude: 32.07,
+        }),
+      }),
+    ));
+  });
+
+  it("refetches the feed with the selected hazard type filter", async () => {
+    const user = userEvent.setup();
+    const floodPost = { ...post, id: "66666666-6666-6666-6666-666666666666", title: "Flooded underpass", hazard_type: "flooding" as const };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url.includes("hazard_type=flooding")) {
+        return Promise.resolve(jsonResponse({ items: [floodPost], offset: 0, limit: 20, has_more: false }));
+      }
+      if (url.startsWith("/api/forum/posts?")) {
+        return Promise.resolve(jsonResponse({ items: [post], offset: 0, limit: 20, has_more: false }));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+    await screen.findByText("Deep pothole on Route 4");
+
+    await user.selectOptions(screen.getByLabelText("Filter by hazard type"), "flooding");
+
+    expect(await screen.findByText("Flooded underpass")).toBeTruthy();
+    expect(screen.queryByText("Deep pothole on Route 4")).toBeNull();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("hazard_type=flooding"),
+      expect.anything(),
+    ));
+  });
+
+  it("loads more posts when Load more is clicked", async () => {
+    const user = userEvent.setup();
+    const secondPost = { ...post, id: "77777777-7777-7777-7777-777777777777", title: "Broken traffic light" };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url.includes("offset=1")) {
+        return Promise.resolve(jsonResponse({ items: [secondPost], offset: 1, limit: 20, has_more: false }));
+      }
+      if (url.startsWith("/api/forum/posts?")) {
+        return Promise.resolve(jsonResponse({ items: [post], offset: 0, limit: 20, has_more: true }));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+    await screen.findByText("Deep pothole on Route 4");
+
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+
+    expect(await screen.findByText("Broken traffic light")).toBeTruthy();
+    expect(screen.getByText("Deep pothole on Route 4")).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("offset=1"),
+      expect.anything(),
     ));
   });
 
