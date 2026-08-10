@@ -46,7 +46,7 @@ services:
     command:
       - /bin/sh
       - -ec
-      - alembic upgrade head && python -m app.initialize_foundation && python -m app.refresh_risk_data
+      - alembic upgrade head && python -m app.initialize_foundation && python -m app.refresh_risk_data && python -m app.seed_forum_demo_data
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
       REDIS_URL: ${REDIS_URL:?Set REDIS_URL in .env}

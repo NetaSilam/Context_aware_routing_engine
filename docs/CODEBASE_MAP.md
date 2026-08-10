@@ -38,8 +38,8 @@ Browser
 Startup is deliberately split into stages:
 
 1. `postgres` and `redis` become healthy.
-2. `initialize` applies Alembic migrations, loads or verifies foundation data, and refreshes the
-   active risk-data version.
+2. `initialize` applies Alembic migrations, loads or verifies foundation data, refreshes the
+   active risk-data version, and cold-seeds forum demo data (users, posts, comments, votes).
 3. `api` and `worker` start only after initialization succeeds.
 4. `frontend` exposes the only host-facing port, normally `http://localhost:8080`.
 
@@ -128,6 +128,10 @@ Startup is deliberately split into stages:
   foundation-data version.
 - `backend/app/refresh_risk_data.py` builds and validates an immutable corridor-risk version and
   activates it transactionally.
+- `backend/app/seed_forum_demo_data.py` cold-seeds the forum with 6 `is_seed_account=true` users,
+  9 historical posts (all 7 hazard types), 11 comments, and 24 votes, using deterministic
+  `uuid5`-derived IDs and unique-constraint upserts so re-running it converges to the same state
+  instead of duplicating rows. Runs last in the `initialize` service's command chain.
 - `backend/app/benchmark_corridor_matchers.py`,
   `backend/app/generate_corridor_matcher_overlays.py`, and
   `backend/app/generate_real_route_corpus.py` support matcher measurement and visual evidence;
@@ -189,11 +193,12 @@ Startup is deliberately split into stages:
   `test_forum_routes.py`, `test_forum_media.py`, `test_messages_routes.py`, and
   `test_notifications_service.py` (pure vote/serialization/media-validation logic, no database)
   and `test_forum_stack.py`/`test_forum_media_stack.py`/`test_messages_stack.py`/
-  `test_notifications_stack.py` (real PostgreSQL/Redis/disk integration: CRUD, ownership,
-  anonymity leak checks, vote counters, the dashboard aggregate, media
-  upload/retrieval/size/type/ownership/count-cap behavior, DM sending/pagination/
-  read-receipts/cross-user isolation, and notification creation/anonymity/read-state — including
-  one test that opens a real Server-Sent Events connection and asserts a live event arrives).
+  `test_notifications_stack.py`/`test_forum_seed_stack.py` (real PostgreSQL/Redis/disk
+  integration: CRUD, ownership, anonymity leak checks, vote counters, the dashboard aggregate,
+  media upload/retrieval/size/type/ownership/count-cap behavior, DM sending/pagination/
+  read-receipts/cross-user isolation, notification creation/anonymity/read-state — including one
+  test that opens a real Server-Sent Events connection and asserts a live event arrives — and
+  cold-seed idempotency by running the seed CLI twice and diffing the row-count report).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client

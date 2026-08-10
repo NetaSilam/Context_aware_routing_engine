@@ -247,17 +247,31 @@ retrieval; 4. Deliver direct messaging.
 **Blocked by:** 1. Add forum/messaging/notification schema; 2. Deliver the core hazard-report
 feed.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/app/seed_forum_demo_data.py`)
 
-- [ ] A seeding step creates a fixed set of `is_seed_account=true` users with a stable email
-      pattern, a fixed set of historical posts spread across hazard types, comment threads, and
-      votes.
-- [ ] The step runs from the one-shot `initialize` Compose service after migrations and
-      foundation data, never from FastAPI startup.
-- [ ] The step is idempotent: running `initialize` twice produces no duplicate seed rows,
-      verified by a test that runs it twice and asserts stable row counts.
-- [ ] Seed content is fixed static text/data authored ahead of time; no network or LLM call
-      happens during seeding.
+- [x] A seeding step creates a fixed set of `is_seed_account=true` users (6, `seed+1@example.local`
+      through `seed+6@example.local`) with a stable email pattern, a fixed set of historical posts
+      (9, spanning all 7 hazard types) spread across hazard types, comment threads (11 comments),
+      and votes (24, never a self-vote). Post/comment `created_at` is explicitly backdated
+      (hours to ~20 days ago) so the feed reads as genuinely historical rather than
+      all-created-at-once.
+- [x] The step runs from the one-shot `initialize` Compose service after migrations and
+      foundation/risk data (`alembic upgrade head && ... && python -m app.seed_forum_demo_data`
+      in `compose.yaml`), never from FastAPI startup.
+- [x] The step is idempotent: every insert is keyed by a deterministic `uuid5`-derived ID (posts,
+      comments) or a unique column (`users.email`, the `forum_votes` unique constraint) with
+      `ON CONFLICT DO NOTHING`/`DO UPDATE ... RETURNING`, and denormalized vote/comment counters
+      are recomputed from the actual seeded rows on every run rather than incremented — so
+      running it twice (or a hundred times) converges to the same state rather than merely
+      "not erroring." Verified by `test_forum_seed_stack.py` (3 tests): running the CLI entrypoint
+      twice via `subprocess` asserts byte-for-byte identical JSON row-count reports, plus checks
+      on hazard-type coverage, comment threads, vote presence, the `seed+N@example.local` email
+      pattern, and that no non-seed user ever ends up misattributed as a seed post's author.
+      Also manually re-verified with a second ad-hoc invocation inside the running container.
+- [x] Seed content is fixed static text/data authored ahead of time (Python literals in
+      `SEED_USERS`/`SEED_POSTS`/`SEED_COMMENTS`/`SEED_VOTES`); no network or LLM call happens
+      during seeding — confirmed by inspection, not just by absence of an API key in the seed
+      service's environment.
 
 ## 8. Build the forum and messaging frontend
 

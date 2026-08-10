@@ -287,14 +287,19 @@ grading.
     conversation, notification, media requiring DM privacy) returns `404`, matching the existing
     route-history convention of not revealing existence.
 
-20. **Cold seeding.** A dedicated seeding step (e.g. `backend/app/seed_forum_demo_data.py`),
-    invoked from the one-shot `initialize` Compose service after migrations and foundation data
-    (never from FastAPI startup), creates a fixed number of clearly-marked seed accounts (a
-    stable email pattern, e.g. `seed+<n>@example.local`, and a `users.is_seed_account` boolean
-    added by the same migration that adds forum tables), a fixed set of historical posts spread
-    across hazard types, comment threads, and votes. The step is idempotent: it checks for
-    existing seed rows by a stable identifier before inserting, so re-running `initialize` does
-    not duplicate seed content.
+20. **Cold seeding.** A dedicated seeding step (`backend/app/seed_forum_demo_data.py`), invoked
+    from the one-shot `initialize` Compose service after migrations, foundation data, and the
+    risk-data refresh (never from FastAPI startup), creates 6 clearly-marked seed accounts (a
+    stable email pattern, `seed+<n>@example.local`, and the `users.is_seed_account` boolean added
+    by the same migration that adds the forum tables), 9 historical posts spread across all 7
+    hazard types, 11 comments, and 24 votes. The step is idempotent by construction rather than
+    by a pre-check: post/comment primary keys are `uuid5(fixed_namespace, "seed-post-N")` (so a
+    second run computes the *same* row identity and `ON CONFLICT DO NOTHING` is a true no-op),
+    `users` upserts on its existing `email` unique constraint, `forum_votes` upserts on its
+    existing `(user_id, target_type, target_id)` unique constraint, and every denormalized
+    counter (`comment_count`, `upvote_count`, `downvote_count`) is *recomputed* from the actual
+    seeded rows at the end of every run rather than incremented — so the step converges to the
+    same state no matter how many times it runs, instead of merely avoiding duplicate rows.
 
 21. **Seed data realism.** Seed posts and comments use plausible static text/hazard-type/location
     combinations authored ahead of time (no LLM call during initialization, keeping
