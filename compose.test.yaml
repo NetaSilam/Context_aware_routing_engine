@@ -308,6 +308,22 @@ services:
       api:
         condition: service_healthy
 
+  forum-security-tests:
+    build: ./backend
+    command: ["pytest", "-q", "-m", "integration", "tests/test_forum_security_stack.py"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://road_risk_test:test-only-password@postgres:5432/road_risk_test
+      REDIS_URL: redis://redis:6379/0
+      FOUNDATION_DATA_VERSION: test-fixture-v1
+      JWT_SECRET: test-only-secret-with-at-least-32-characters
+      AUTH_ALLOWED_ORIGIN: http://frontend:8080
+      RUN_FORUM_SECURITY_INTEGRATION: "true"
+    depends_on:
+      initialize:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
   forum-seed-tests:
     build: ./backend
     command: ["pytest", "-q", "-m", "integration", "tests/test_forum_seed_stack.py"]

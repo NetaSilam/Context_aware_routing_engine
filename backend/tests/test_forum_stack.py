@@ -141,6 +141,7 @@ def test_comment_lifecycle_and_post_comment_count() -> None:
         forbidden_edit = author.patch(
             f"/api/forum/comments/{comment_id}", json={"body": "hijacked"}, headers=MUTATE_HEADERS
         )
+        forbidden_delete = author.delete(f"/api/forum/comments/{comment_id}", headers=MUTATE_HEADERS)
         owner_edit = commenter.patch(
             f"/api/forum/comments/{comment_id}",
             json={"body": "Cleared up by afternoon."},
@@ -153,6 +154,7 @@ def test_comment_lifecycle_and_post_comment_count() -> None:
     assert len(listed.json()["items"]) == 1
     assert after_comment_post.json()["comment_count"] == 1
     assert forbidden_edit.status_code == 404
+    assert forbidden_delete.status_code == 404
     assert owner_edit.status_code == 200
     assert owner_edit.json()["body"] == "Cleared up by afternoon."
     assert owner_delete.status_code == 204

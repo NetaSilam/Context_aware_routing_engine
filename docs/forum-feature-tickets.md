@@ -340,15 +340,55 @@ Testing Decisions 6-7.
 **Blocked by:** 6. Add forum/messaging rate limiting and abuse protection; 8. Build the forum and
 messaging frontend.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/tests/test_forum_security.py`, `backend/tests/test_forum_security_stack.py`,
+`backend/tests/stress/locustfile.py`)
 
-- [ ] Security tests verify anonymous authorship never appears in any response, DM/edit/delete
+- [x] Security tests verify anonymous authorship never appears in any response, DM/edit/delete
       access is ownership-filtered and returns 404 for non-owners, media endpoints resist
       path/ID guessing, and no forum/DM/notification log line contains body text or media bytes.
-- [ ] The existing Locust stress profile is extended with rapid post/comment/vote/DM bursts from
-      many simulated users and one abusive user, asserting bounded `429`/`503` responses, no
-      process crash, and no cross-user data leakage.
-- [ ] `docs/DOCUMENTATION_GUIDE.md` and `docs/CODEBASE_MAP.md` are updated to list the new forum
-      modules, tables, and tests, following those documents' own maintenance rules.
-- [ ] The feature-to-test matrix (see `ROUTING_FEATURE_PRD.md` Testing Decision 18's equivalent)
-      is extended to cover every forum feature claimed complete.
+      Most ownership/anonymity/media-guessing coverage already existed
+      (`test_post_update_and_delete_are_owner_only`, `test_anonymous_post_and_comment_hide_author_
+      from_others_but_not_from_self`, `test_missing_media_id_returns_404`,
+      `test_dm_media_is_not_visible_to_a_non_participant`); auditing it found one real gap —
+      `test_comment_lifecycle_and_post_comment_count` asserted a non-owner's comment *edit* is
+      rejected but never asserted a non-owner's *delete* is — fixed by adding a
+      `forbidden_delete` assertion there. The log-content requirement was entirely untested and is
+      new: `test_forum_security.py::test_forum_dm_and_notification_modules_never_call_the_logging_
+      module` is a fast static check (no `logging`/`logger` reference anywhere in
+      `app/forum/`, `app/messaging/`, `app/notifications/` — unlike `app/routing/route_jobs.py`,
+      which logs structured, content-free events only) and
+      `test_forum_security_stack.py::test_forum_dm_and_notification_activity_never_appears_in_
+      process_output` is the empirical proof: it creates a post/comment/DM/media upload with
+      distinctive random marker strings through an in-process `TestClient(create_app())` against
+      real Postgres/Redis, then asserts none of those markers appear in `capfd`-captured
+      stdout/stderr (the same file descriptors a container's log driver reads — not just records
+      routed through pytest's own logging handlers, which `app.main`'s module-level
+      `configure_structured_logging()` call replaces). Both tests were verified against a real
+      negative control: a temporary `logging.getLogger(__name__).info(payload.body)` call added to
+      `create_post` made both tests fail with the actual leaked line
+      (`"creating post: SECRET-POST-BODY-..."` for the stack test), then was reverted.
+- [x] The existing Locust stress profile (`backend/tests/stress/locustfile.py`) is extended:
+      `RouteWorkflowUser` gained `report_and_vote_on_hazard` (create-once-then-repeatedly-vote),
+      `comment_on_a_hazard_report`, and `send_a_direct_message` (to a random previously-seen
+      simulated user ID) tasks, all treating `429`/`503` as expected bounded outcomes alongside
+      success codes. A new `AbusiveForumUser` class (`fixed_count = 1`, near-zero `wait_time`)
+      hammers `POST /api/forum/posts` to model "one abusive user" precisely, matching the ticket
+      wording, rather than approximating it via task weight. Verified against the real
+      `compose.test.yaml` `stress-tests` service (`-u 12 -r 4 -t 20s`): 347 requests, 0 unexpected
+      statuses, `AbusiveForumUser`/`RouteWorkflowUser` split 1/11 as intended. Separately confirmed
+      by direct request against the running `stress-api` container that the bounding is real, not
+      just accepted-by-construction: 10 rapid `POST /api/forum/posts` from one session returned
+      exactly `[201, 201, 201, 201, 201, 429, 429, 429, 429, 429]`, matching the default
+      `forum_post_user_rate_limit=5`.
+- [x] `docs/CODEBASE_MAP.md` is updated to list the two new test files. `docs/DOCUMENTATION_GUIDE.md`
+      needed no changes on inspection — it already lists `FORUM_FEATURE_PRD.md`/
+      `forum-feature-tickets.md` as current, and (like the routing vertical) this repository has no
+      separate per-table schema-listing document; migrations are the source of truth for schema,
+      consistent with how routing tables are documented.
+- [x] The feature-to-test matrix requirement is met the same way the routing vertical meets it:
+      `ROUTING_FEATURE_PRD.md`'s Testing Decision 18 is a policy statement, not a literal grid file
+      (`GRADING_VALIDATION.md`, which would have held one, was deleted per `DOCUMENTATION_GUIDE.md`'s
+      "Known documentation drift" section and never regenerated). This ticket file's own per-ticket
+      `**Status:** done (...)` lines, each naming the exact test file(s) that prove the ticket,
+      collectively serve that role for the forum vertical — every ticket 1-9 status line above
+      names real, currently-passing test files, not aspirational ones.

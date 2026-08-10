@@ -190,28 +190,40 @@ Startup is deliberately split into stages:
 ## Tests and verification
 
 - Backend unit and integration tests are under `backend/tests/`, including
-  `test_forum_routes.py`, `test_forum_media.py`, `test_messages_routes.py`, and
-  `test_notifications_service.py` (pure vote/serialization/media-validation logic, no database)
+  `test_forum_routes.py`, `test_forum_media.py`, `test_messages_routes.py`,
+  `test_notifications_service.py`, and `test_forum_security.py` (pure vote/serialization/
+  media-validation/security logic, no database — the last of these statically asserts
+  `app/forum/`, `app/messaging/`, and `app/notifications/` never reference the `logging` module,
+  so post/comment/DM body text and media bytes can never reach a log line)
   and `test_forum_stack.py`/`test_forum_media_stack.py`/`test_messages_stack.py`/
-  `test_notifications_stack.py`/`test_forum_seed_stack.py`/`test_forum_abuse_stack.py` (real
-  PostgreSQL/Redis/disk integration: CRUD, ownership, anonymity leak checks, vote counters, the
-  dashboard aggregate, media upload/retrieval/size/type/ownership/count-cap behavior, DM sending/
-  pagination/read-receipts/cross-user isolation, notification creation/anonymity/read-state —
-  including one test that opens a real Server-Sent Events connection and asserts a live event
-  arrives — cold-seed idempotency by running the seed CLI twice and diffing the row-count report,
-  and forum/DM abuse protection: rapid posting/commenting/voting/messaging from one user gets
-  bounded by `429`+`Retry-After` against the tightened `abuse-api` service, and a genuine Redis
-  outage (the `geocoding-unavailable-api` service) makes forum/DM writes fail closed with
-  `503`+`Retry-After` while feed/post/comment/conversation reads stay available).
+  `test_notifications_stack.py`/`test_forum_seed_stack.py`/`test_forum_abuse_stack.py`/
+  `test_forum_security_stack.py` (real PostgreSQL/Redis/disk integration: CRUD, ownership
+  (including non-owner comment edit *and* delete both returning `404`), anonymity leak checks,
+  vote counters, the dashboard aggregate, media upload/retrieval/size/type/ownership/count-cap
+  behavior, DM sending/pagination/read-receipts/cross-user isolation, notification
+  creation/anonymity/read-state — including one test that opens a real Server-Sent Events
+  connection and asserts a live event arrives — cold-seed idempotency by running the seed CLI
+  twice and diffing the row-count report, forum/DM abuse protection (rapid posting/commenting/
+  voting/messaging from one user gets bounded by `429`+`Retry-After` against the tightened
+  `abuse-api` service, and a genuine Redis outage via the `geocoding-unavailable-api` service
+  makes forum/DM writes fail closed with `503`+`Retry-After` while feed/post/comment/conversation
+  reads stay available), and the empirical counterpart to the static logging check above: an
+  in-process `TestClient(create_app())` run creates a post/comment/DM/media upload with
+  distinctive marker strings and asserts none of them appear in `capfd`-captured process
+  stdout/stderr).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
-  behavior, including `frontend/src/pages/ForumPage.test.tsx`, `frontend/src/pages/
+  behavior, including `frontend/src/pages/ForumPage.test.tsx` (feed rendering, filtering, paging,
+  form validation, location capture, vote toggling, media upload, comments), `frontend/src/pages/
   InboxPage.test.tsx`, `frontend/src/components/notifications/NotificationIndicator.test.tsx`
   (mocked `EventSource`), `frontend/src/api/messages.test.ts`, and `frontend/src/lib/
   applyVote.test.ts`.
 - `frontend/e2e/route-journey.mjs` covers the browser route journey.
-- `backend/tests/stress/locustfile.py` covers concurrent and abusive request behavior.
+- `backend/tests/stress/locustfile.py` covers concurrent and abusive request behavior: alongside
+  the routing workflow tasks, `RouteWorkflowUser` creates/votes/comments on hazard reports and
+  sends direct messages, and a `fixed_count = 1` `AbusiveForumUser` hammers forum post creation
+  to model exactly one abusive account, all treating `429`/`503` as expected bounded outcomes.
 - `scripts/run_grading_validation.sh` is the complete isolated validation entry point, running one
   Compose test service per feature area (see `compose.test.yaml`, e.g. `forum-tests`,
   `forum-abuse-tests`) in sequence.
@@ -262,3 +274,12 @@ Startup is deliberately split into stages:
   endpoint must stay a GET (or otherwise stay excluded from that path), and must be verified
   against a concurrent request on a real Compose stack before being considered done — this class
   of bug does not show up in unit tests or in a single manual request.
+- `app/forum/`, `app/messaging/`, and `app/notifications/` must never call the `logging` module.
+  Post/comment/DM bodies and media bytes are user content and must never reach a log line;
+  `test_forum_security.py` statically enforces this (any `logging`/`logger` reference in those
+  packages fails the test) and `test_forum_security_stack.py` proves it empirically end-to-end.
+  If a forum/DM/notification code path genuinely needs to log something, log only content-free
+  structured fields (job/entity IDs, event names, counts) — the way
+  `app/routing/route_jobs.py`'s `log_route_event` already does — from a different module, and
+  update `test_forum_security.py`'s watched-module logic deliberately rather than working around
+  the check.
