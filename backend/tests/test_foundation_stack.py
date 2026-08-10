@@ -22,6 +22,16 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 SYNC_DATABASE_URL = DATABASE_URL.replace("postgresql+psycopg://", "postgresql://")
 REDIS_URL = os.environ.get("REDIS_URL", "")
 FIXTURE_PATH = Path("/app/tests/fixtures/foundation_fixture.sql")
+ALEMBIC_VERSIONS_DIR = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+
+
+def _latest_migration_id() -> str:
+    # Derived from the committed migration files rather than hardcoded, so this test
+    # does not silently go stale (and start failing in CI) every time a migration is added.
+    revision_ids = sorted(
+        path.stem.split("_", 1)[0] for path in ALEMBIC_VERSIONS_DIR.glob("*_*.py")
+    )
+    return revision_ids[-1]
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +71,7 @@ def test_clean_stack_is_migrated_initialized_and_ready() -> None:
         ).fetchone()
         postgis_version = connection.execute("SELECT PostGIS_Version()").fetchone()[0]
 
-    assert migration == "0005"
+    assert migration == _latest_migration_id()
     assert foundation[0] == "test-fixture-v1"
     assert len(foundation[1]) == 64
     assert foundation[2] == "fixture"
