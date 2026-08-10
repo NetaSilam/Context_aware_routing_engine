@@ -14,16 +14,22 @@ grep noise this time, a direct search for `llm|openai|gemini|anthropic|huggingfa
 `PROJECT_REQUIREMENTS.md` §1.2 recommends **hazard report triage & dedup** as the primary
 feature: free-text forum reports get classified into `{hazard_type, severity}`, and near-duplicate
 reports about the same spot get flagged instead of letting ten posts pile up about one pothole.
-That document also floats a secondary "route explanation" feature (turning the routing cost
-breakdown into a plain-language explanation) — **explicitly out of scope for this PRD** (decided
-2026-08-10): triage/dedup alone satisfies the requirement and is the better fit for the mandatory
-fill-time heuristic, since report length and dedup-batch size vary in a way a single classification
-call does not.
+This is the feature the mandatory fill-time heuristic is built and tested against, since report
+length and dedup-batch size genuinely vary in a way that gives the heuristic something real to do.
 
-**Provider decision (2026-08-10):** Google Gemini, matching the `GEMINI_API_KEY` placeholder
-already anticipated in `.env.example`. Called via plain `httpx` (already a project dependency,
-already the pattern used for OSRM/Nominatim) rather than adding the `google-generativeai` SDK as
-a new dependency for a single REST call.
+**Scope decision (2026-08-10, revised):** the secondary **route explanation** feature — turning
+`route_scoring_service.py`'s numeric cost breakdown (`Wsafe`/`Wtime`, normalized risk, the chosen
+candidate's historical accident density) into a one-paragraph plain-language "why you got this
+route" explanation — is **in scope**, added after the original triage/dedup-only decision. It
+reuses the same Gemini client, the same `settings.testing` gate, and (for consistency and latency
+isolation, even though the job-queue requirement is already satisfied by triage/dedup)
+the same `llm-fast` queue as triage, rather than blocking route-job completion synchronously.
+
+**Provider decision (2026-08-10):** Google Gemini — a real `GEMINI_API_KEY` is now set in the
+local, gitignored `.env` (confirmed present and non-placeholder; never printed or committed).
+Called via plain `httpx` (already a project dependency, already the pattern used for OSRM/
+Nominatim) rather than adding the `google-generativeai` SDK as a new dependency for two REST call
+shapes.
 
 **Open item, not a blocker:** `PROJECT_REQUIREMENTS.md` §6.2 notes that "Local LLM Integration"
 wording should ideally be confirmed with course staff as satisfied by an API-based provider rather
@@ -55,12 +61,21 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
   notifications — see `FORUM_FEATURE_PRD.md` decision 14), enqueue a triage job referencing the
   new post. The forum feature itself is not modified beyond this one enqueue call plus new
   response fields; no change to anonymity, voting, or media handling.
-- **Gemini client** (`app/llm/client.py`) wraps one REST call: given a report's body + hazard type
-  + optional location, return `{hazard_type_suggested, severity}` and, for a dedup check, a
-  yes/no/confidence judgment against a candidate report's text. Gated by `settings.testing`: when
-  true (always true in the test/CI environment), the client returns a deterministic canned
-  response and makes no network call at all — not just a stubbed HTTP layer, the client function
-  itself branches before ever constructing a request.
+- **Gemini client** (`app/llm/client.py`) wraps three REST call shapes: given a report's body +
+  hazard type + optional location, return `{hazard_type_suggested, severity}`; for a dedup check,
+  a yes/no/confidence judgment against a candidate report's text; for route explanation, a
+  cost-breakdown + user profile in, a one-paragraph explanation string out. Gated by
+  `settings.testing`: when true (always true in the test/CI environment), the client returns a
+  deterministic canned response and makes no network call at all — not just a stubbed HTTP layer,
+  the client function itself branches before ever constructing a request.
+- **Route explanation trigger:** when a route job's Celery task (`route_job_tasks.py`) finishes
+  writing the completed job's snapshot, it enqueues a `route_explanation` LLM job carrying the
+  chosen candidate's cost breakdown and the user's scoring context directly as task arguments (not
+  re-derived from the database by the LLM worker, to keep the LLM module decoupled from routing's
+  internal snapshot shape). The `llm-worker` calls `explain_route`, then merges the result into the
+  existing `route_jobs.snapshot` JSONB (`snapshot || jsonb_build_object('llm_explanation', ...)`) —
+  no new column on `route_jobs`, consistent with `ROUTING_FEATURE_PRD.md`'s existing "complete
+  results use versioned JSONB snapshots" decision rather than a parallel relational table.
 
 ## User Stories
 
@@ -77,6 +92,12 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    so the suite is fast, free, and never flaky because of an external provider's latency or quota.
 6. As a user, I want the system to keep working normally if the LLM provider is unreachable or
    errors — my report still posts and stays visible, just without a suggested classification.
+7. As a driver who just got a route, I want a short plain-language reason for why this route was
+   chosen over the alternatives, so the numeric cost/risk breakdown is not the only explanation
+   offered.
+8. As a user, I want my route result to keep working exactly as it does today if the explanation
+   is still processing or fails — the route, its candidates, and its numeric breakdown are never
+   gated on the LLM call succeeding.
 
 ## Implementation Decisions
 
@@ -89,12 +110,15 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    `celery -A app.llm.tasks.celery_app worker -Q llm-fast,llm-slow --loglevel=INFO` (queue order
    matters — Celery drains listed queues in order, giving fast jobs priority). The existing
    `worker` service is untouched and continues to own only the routing queue.
-3. **Schema.** `app.llm_jobs`: `id (uuid)`, `kind` (`triage` | `dedup_check`), `subject_post_id`,
-   `status` (`queued` | `running` | `completed` | `failed`), `queue_name`, `estimated_duration_ms`,
-   `result` (jsonb, nullable), `error` (text, nullable), `created_at`, `completed_at`. Forum posts
-   gain nullable `llm_hazard_type_suggested`, `llm_severity`, `duplicate_of_post_id` columns rather
-   than requiring a join for the common read path (the feed already reads denormalized counters
-   the same way — see `FORUM_FEATURE_PRD.md`'s posts table).
+3. **Schema.** `app.llm_jobs`: `id (uuid)`, `kind` (`triage` | `dedup_check` | `route_explanation`),
+   `subject_post_id` (nullable — unused for `route_explanation`), `subject_route_job_id` (nullable
+   — unused for `triage`/`dedup_check`, references `app.route_jobs.id`), `status`
+   (`queued` | `running` | `completed` | `failed`), `queue_name`, `estimated_duration_ms`, `result`
+   (jsonb, nullable), `error` (text, nullable), `created_at`, `completed_at`. Forum posts gain
+   nullable `llm_hazard_type_suggested`, `llm_severity`, `duplicate_of_post_id` columns rather than
+   requiring a join for the common read path (the feed already reads denormalized counters the
+   same way — see `FORUM_FEATURE_PRD.md`'s posts table). `route_jobs` gains **no new column**;
+   its explanation lives inside the existing `snapshot` JSONB (decision 11 below).
 4. **Fill-time heuristic.** `estimate_duration_ms(kind, input_chars, candidate_count)` is a pure
    function: a fixed base cost plus a per-character cost for `triage`, and additionally a
    per-candidate cost for `dedup_check` (since a dedup job compares against `candidate_count`
@@ -134,6 +158,20 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
 10. **No re-classification on edit.** Editing a post's body does not re-trigger triage/dedup in
     v1 — avoids a whole class of "stale classification vs. edited content" bugs for a feature
     that is enrichment, not load-bearing. Worth a "future work" mention, not worth building now.
+11. **Route explanation trigger and storage.** The route job Celery task enqueues a
+    `route_explanation` LLM job immediately after it writes the job's `completed` snapshot (not
+    before — the explanation must describe a route that was actually chosen, and must never delay
+    or block the route result the user is waiting on). `explain_route` receives the chosen
+    candidate's `duration_seconds`, `historical_accident_density_per_km`, `final_cost` breakdown,
+    and the user's `driving_experience`/`vehicle_type`/time-of-day context — the same inputs
+    `route_scoring_service.py` already computed, passed as task arguments, not re-queried. The
+    `llm-worker` writes the result back with
+    `UPDATE app.route_jobs SET snapshot = snapshot || jsonb_build_object('llm_explanation', :text) WHERE id = :id`.
+    Same fail-open behavior as decision 6: a failed/errored explanation job leaves `llm_explanation`
+    absent from the snapshot; the route result is complete and usable without it.
+12. **Route explanation reuses the fast queue.** A single explanation call has the same rough cost
+    shape as a single triage call (one document in, one short document out) — `estimate_duration_ms`
+    classifies it the same way triage is classified, so it does not need a third queue.
 
 ## Testing Decisions
 
@@ -162,11 +200,13 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    real API key or a live HTTP mock server — faster and with zero external dependency, consistent
    with how `fake_osrm`/`fake_geocoder` exist as real HTTP doubles for *those* upstreams but an
    in-process branch is simpler and sufficient here since there is exactly one call shape.
+7. **Route explanation coverage.** A completed route job eventually gets a non-empty
+   `llm_explanation` in its snapshot (mocked client, real Celery/Postgres); a simulated provider
+   failure leaves the route job's existing fields (candidates, chosen index, cost breakdown) fully
+   intact and `llm_explanation` simply absent — the route result was never gated on this call.
 
 ## Out of Scope
 
-- Route explanation (turning the routing cost breakdown into plain language) — the PRD's originally
-  floated secondary feature; explicitly deferred, not required for the 10 pts.
 - Self-hosted/local model weights — API-based integration is the accepted reading of "Local LLM
   Integration" for this project (see the open item above).
 - Multi-provider fallback (Gemini down → try OpenAI) — one provider is sufficient for the

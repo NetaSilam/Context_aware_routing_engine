@@ -14,10 +14,13 @@ somewhere to enqueue work without sharing the routing queue.
 
 **Status:** ready-for-agent
 
-- [ ] Alembic migration adds `app.llm_jobs` (`id`, `kind`, `subject_post_id`, `status`,
-      `queue_name`, `estimated_duration_ms`, `result` jsonb, `error`, `created_at`,
-      `completed_at`) and adds nullable `llm_hazard_type_suggested`, `llm_severity`,
-      `duplicate_of_post_id` columns to `app.forum_posts` (PRD decision 3).
+- [ ] Alembic migration adds `app.llm_jobs` (`id`, `kind` — `triage`/`dedup_check`/
+      `route_explanation`, `subject_post_id` nullable, `subject_route_job_id` nullable
+      references `app.route_jobs.id`, `status`, `queue_name`, `estimated_duration_ms`, `result`
+      jsonb, `error`, `created_at`, `completed_at`) and adds nullable `llm_hazard_type_suggested`,
+      `llm_severity`, `duplicate_of_post_id` columns to `app.forum_posts` (PRD decision 3).
+      `app.route_jobs` gets no new column — its explanation lives in the existing `snapshot`
+      jsonb (PRD decision 11).
 - [ ] `app/llm/tasks.py` defines its own `Celery("road-risk-llm-worker", ...)` app with
       `task_routes` sending work to `llm-fast`/`llm-slow` queues (PRD decision 2).
 - [ ] `compose.yaml` gains an `llm-worker` service running
@@ -44,6 +47,9 @@ gate that keeps every automated test from ever making it for real.
       decisions 1, 7).
 - [ ] `compare_for_duplicate(report_a, report_b) -> {is_duplicate, confidence}` follows the same
       real/mocked branching.
+- [ ] `explain_route(cost_breakdown, user_context) -> str` follows the same real/mocked branching
+      (PRD decision 11) — added in this ticket even though ticket 7 is what wires it in, so the
+      client module ships with all three call shapes together.
 - [ ] Response parsing validates the provider's JSON shape and raises a typed error on malformed
       output rather than propagating a raw parse exception.
 - [ ] Unit tests cover response parsing/validation against fixed sample payloads, and confirm the
@@ -134,13 +140,53 @@ detection and flagging.
       states, consistent with how other async/eventually-consistent UI state is tested elsewhere
       in this codebase (e.g. the notification indicator's mocked `EventSource`).
 
-## 7. Extend security and stress validation to the LLM queue
+## 7. Deliver route explanation on route job completion
+
+**What to build:** The second real LLM-backed feature — a plain-language "why you got this route"
+explanation attached to every completed route job.
+
+**Blocked by:** 2. Add the Gemini client.
+
+**Status:** ready-for-agent
+
+- [ ] The route job Celery task (`route_job_tasks.py`) enqueues a `route_explanation` LLM job
+      immediately after writing the job's `completed` snapshot, passing the chosen candidate's
+      cost breakdown and the user's scoring context as task arguments (PRD decision 11) — never
+      before the snapshot is written, and never blocking the route job's own completion.
+- [ ] The `llm-worker`'s `route_explanation` task calls `explain_route`, then merges the result
+      into `route_jobs.snapshot` via `snapshot || jsonb_build_object('llm_explanation', ...)` — no
+      new column.
+- [ ] A provider error or timeout leaves the route job's existing fields (candidates, chosen
+      index, cost breakdown) fully intact; `llm_explanation` is simply absent (PRD decision 6/11,
+      fail-open) — verified with the mock simulating a failure, not just asserted from the code.
+- [ ] Route job GET/history response models expose a nullable `llm_explanation` field read from
+      the snapshot.
+- [ ] Integration test: submit a route job against the real disposable stack, wait for it to
+      complete, then wait for the (mocked) explanation to appear in the same job's snapshot.
+
+## 8. Surface the route explanation in the frontend
+
+**What to build:** Make ticket 7's output visible on the route result the user is already looking
+at, without requiring a page reload.
+
+**Blocked by:** 7. Deliver route explanation on route job completion.
+
+**Status:** ready-for-agent
+
+- [ ] `PlanRoutePage`'s result panel shows the explanation text when present, and shows nothing
+      extra (not a loading spinner blocking the rest of the result) when it is still processing or
+      failed — the numeric breakdown and map are never gated on it.
+- [ ] Route job/history types and API client gain the new nullable field.
+- [ ] Frontend tests cover both the present and absent states, matching ticket 6's approach for
+      forum classification.
+
+## 9. Extend security and stress validation to the LLM queue
 
 **What to build:** Prove this feature meets the same bar as everything else in the repo, per PRD
-Testing Decision 5, before calling it done.
+Testing Decisions 5 and 7, before calling it done.
 
 **Blocked by:** 4. Deliver hazard report triage on post creation; 5. Deliver near-duplicate
-detection and flagging.
+detection and flagging; 7. Deliver route explanation on route job completion.
 
 **Status:** ready-for-agent
 
@@ -148,9 +194,9 @@ detection and flagging.
       `test_forum_security_stack.py`'s `capfd`-based proof for forum/DM content.
 - [ ] A test proves every automated test environment runs with `settings.testing = true` (no
       accidental real API call from CI).
-- [ ] The Locust stress profile gets a task creating hazard reports at a higher rate than usual,
-      asserting the `llm-fast`/`llm-slow` queues stay bounded (no unbounded growth, no worker
-      crash) under load, consistent with `docs/forum-feature-tickets.md` ticket 9's stress
+- [ ] The Locust stress profile gets tasks creating hazard reports and route jobs at a higher rate
+      than usual, asserting the `llm-fast`/`llm-slow` queues stay bounded (no unbounded growth, no
+      worker crash) under load, consistent with `docs/forum-feature-tickets.md` ticket 9's stress
       extension.
 - [ ] `docs/CODEBASE_MAP.md` and `docs/DOCUMENTATION_GUIDE.md` are updated to list the new `llm`
       module, table, worker service, and tests.
