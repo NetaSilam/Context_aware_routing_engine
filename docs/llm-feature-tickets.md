@@ -183,20 +183,43 @@ instead of silently piling up.
 
 **Blocked by:** 4. Deliver hazard report triage on post creation.
 
-**Status:** ready-for-agent
+**Status:** done (`backend/app/llm/tasks.py`, `backend/tests/test_llm_dedup_stack.py`)
 
-- [ ] After a successful triage, if the post has coordinates, enqueue a `dedup_check` job that
-      finds candidate posts of the same `hazard_type` within `llm_dedup_radius_meters` and
-      `llm_dedup_lookback_days` (PRD decision 5), reusing the existing PostGIS distance-query
-      pattern from `data_routes.py`.
-- [ ] For each candidate (bounded — cap the candidate count so one dense area cannot create an
-      unbounded job), call `compare_for_duplicate`; on a confirmed duplicate, set
-      `duplicate_of_post_id` and surface that in the API response rather than deleting the post.
-- [ ] A post with no coordinates skips dedup entirely (PRD decision 5) — verified, not assumed.
-- [ ] Integration tests cover: a genuine near-duplicate (same hazard type, close in space/time)
-      gets flagged; a different hazard type at the same spot does not; the same hazard type far
-      away does not; a candidate-count cap is actually enforced against a dense cluster of
-      existing posts.
+- [x] After a successful `triage`, `_enqueue_dedup_check_if_applicable` (in `app/llm/tasks.py`,
+      called from `run_llm_job` right after `_run_triage` succeeds, wrapped in its own bare
+      `try/except: pass` — dedup is enrichment on top of enrichment, so a problem here must never
+      fail an already-succeeded triage job) checks whether the post has coordinates; if so it
+      finds candidates via `_find_dedup_candidates`, computes the estimate/queue from the real
+      (capped) candidate count, inserts the `dedup_check` row, commits, and only then calls
+      `run_llm_job.apply_async(...)` — the same create-then-commit-then-dispatch ordering as the
+      async FastAPI path, just written with sync `psycopg` since Celery tasks in this codebase are
+      synchronous (PRD decision 5). **Note on "reusing the PostGIS pattern from `data_routes.py`"**:
+      `forum_posts` has no stored PostGIS geometry column (just plain `longitude`/`latitude`
+      floats), unlike the tables `data_routes.py` queries — so the distance search is computed
+      on the fly via `ST_DWithin(ST_MakePoint(...)::geography, ST_MakePoint(...)::geography,
+      radius)` rather than literally reusing that file's query, which assumes a stored geometry.
+      This still uses the same already-enabled PostGIS extension the rest of the project relies
+      on, without widening the forum schema for one feature.
+- [x] `_find_dedup_candidates` bounds candidates with the SQL `LIMIT :llm_dedup_candidate_limit`
+      clause directly (same value used for both the enqueue-time count and the dedup_check task's
+      own re-query at execution time — the candidate set is re-fetched fresh rather than passed
+      through the job, so it reflects the current state, not a stale snapshot from enqueue time).
+      `_run_dedup_check` calls `compare_for_duplicate` per candidate (nearest/most-recent first)
+      and stops at the first confirmed duplicate, setting `duplicate_of_post_id` — already surfaced
+      in the API response since ticket 4 added the field to `PostSummary`/`PostDetail`; the post is
+      never deleted or hidden.
+- [x] A post with no coordinates skips dedup entirely — verified, not assumed:
+      `test_a_post_with_no_coordinates_never_gets_a_dedup_check_job` asserts no `dedup_check` row
+      is ever created for such a post (not just "not yet").
+- [x] Integration tests (`test_llm_dedup_stack.py`, verified against a real disposable stack — a
+      dedicated `llm-dedup-api`/`llm-dedup-worker-fast` pair with `LLM_DEDUP_CANDIDATE_LIMIT`
+      overridden to `2`, since that setting is baked into a process's `Settings` at startup and
+      testing the cap cheaply needs a small number, not exhausting the real default of 20): a
+      genuine near-duplicate (same hazard type, same wording, ~15m apart) gets flagged; a
+      different hazard type at the same exact spot does not; the same hazard type ~100km+ away
+      does not; a post with no coordinates never gets a `dedup_check` job at all; and a dense
+      cluster of 4 nearby same-hazard-type posts against a limit of 2 produces a job whose
+      `result.candidates_checked == 2`, not 4 — proving the cap is enforced, not just configured.
 
 ## 6. Surface classification and duplicate flags in the frontend
 

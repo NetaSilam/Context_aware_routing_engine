@@ -131,7 +131,19 @@ Startup is deliberately split into stages:
   (real HTTP call via `httpx.AsyncClient` when false; a fixed or input-derived deterministic value
   when true, with no `httpx` construction at all on that path). All three raise `LlmError` (or the
   more specific `LlmNotConfiguredError`) on any provider failure, malformed response, or missing
-  `GEMINI_API_KEY` — never a raw `httpx`/parsing exception.
+  `GEMINI_API_KEY` — never a raw `httpx`/parsing exception. It also exposes
+  `TEST_FAILURE_MARKER` — a magic substring that, when `settings.testing` is true and present in
+  the input text, makes the mock path raise instead of returning a canned result (mirrors
+  `route_job_tasks.py`'s `_test_crash_once` convention), used by fail-open integration tests.
+- `run_llm_job` (in `app/llm/tasks.py`) dispatches by `kind`: `triage` calls `classify_report` and,
+  on success, chains straight into `dedup_check` if the post has coordinates
+  (`_enqueue_dedup_check_if_applicable`) — a job created and enqueued from *inside* a Celery task,
+  not an API route, so it uses sync `psycopg` end to end rather than the async `create_llm_job`/
+  `enqueue_llm_job` in `app/llm/service.py` (which stays FastAPI-request-only). `dedup_check` calls
+  `compare_for_duplicate` against nearby same-hazard-type posts found via an on-the-fly
+  `ST_DWithin(..., ...::geography, radius)` search (no stored geometry column on `forum_posts`),
+  bounded by `llm_dedup_candidate_limit`, and sets `duplicate_of_post_id` on the first match.
+  `route_explanation` (ticket 7) still uses the ticket 3 placeholder.
 
 ### Route execution
 
@@ -259,6 +271,12 @@ Startup is deliberately split into stages:
   job completes, and a report body carrying `app.llm.client.TEST_FAILURE_MARKER` produces a
   `failed` job while the post stays fully visible in both the detail fetch and the feed —
   proving PRD decision 6's fail-open guarantee empirically, not just by code inspection.
+  `test_llm_dedup_stack.py` runs against its own dedicated `llm-dedup-api`/`llm-dedup-worker-fast`
+  pair (not the shared services — `LLM_DEDUP_CANDIDATE_LIMIT` is baked into a process's `Settings`
+  at startup, and testing the cap cheaply needs a small override, not the real default of 20) and
+  proves a genuine near-duplicate gets flagged, a different hazard type or far-away location does
+  not, a post with no coordinates never gets a `dedup_check` job, and a dense cluster of candidates
+  is genuinely capped (`result.candidates_checked` equals the override, not the real total).
 - `backend/tests/fake_osrm/` and `backend/tests/fake_geocoder/` make upstream behavior
   deterministic without public-network or national-graph dependencies.
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
