@@ -19,8 +19,9 @@ somewhere to enqueue work without sharing the routing queue.
       references `app.route_jobs.id`, `status`, `queue_name`, `estimated_duration_ms`, `result`
       jsonb, `error`, `created_at`, `completed_at`) and adds nullable `llm_hazard_type_suggested`,
       `llm_severity`, `duplicate_of_post_id` columns to `app.forum_posts` (PRD decision 3).
-      `app.route_jobs` gets no new column — its explanation lives in the existing `snapshot`
-      jsonb (PRD decision 11).
+      `app.route_jobs` gets no new column — its explanation is merged into the existing `result`
+      jsonb column it already writes candidates/chosen_index into, not the `snapshot` column,
+      which holds the request inputs (PRD decision 11).
 - [ ] `app/llm/tasks.py` defines its own `Celery("road-risk-llm-worker", ...)` app with
       `task_routes` sending work to `llm-fast`/`llm-slow` queues (PRD decision 2).
 - [ ] `compose.yaml` gains an `llm-worker` service running
@@ -150,19 +151,20 @@ explanation attached to every completed route job.
 **Status:** ready-for-agent
 
 - [ ] The route job Celery task (`route_job_tasks.py`) enqueues a `route_explanation` LLM job
-      immediately after writing the job's `completed` snapshot, passing the chosen candidate's
-      cost breakdown and the user's scoring context as task arguments (PRD decision 11) — never
-      before the snapshot is written, and never blocking the route job's own completion.
+      immediately after writing the job's `completed` row, passing the chosen candidate's cost
+      breakdown and the user's scoring context as task arguments (PRD decision 11) — never before
+      that row is written, and never blocking the route job's own completion.
 - [ ] The `llm-worker`'s `route_explanation` task calls `explain_route`, then merges the result
-      into `route_jobs.snapshot` via `snapshot || jsonb_build_object('llm_explanation', ...)` — no
-      new column.
+      into `route_jobs.result` (the column `_calculate_result` already populates with candidates/
+      chosen_index) via `result || jsonb_build_object('llm_explanation', ...)` — not the
+      `snapshot` column, and no new column.
 - [ ] A provider error or timeout leaves the route job's existing fields (candidates, chosen
       index, cost breakdown) fully intact; `llm_explanation` is simply absent (PRD decision 6/11,
       fail-open) — verified with the mock simulating a failure, not just asserted from the code.
 - [ ] Route job GET/history response models expose a nullable `llm_explanation` field read from
-      the snapshot.
+      `result`.
 - [ ] Integration test: submit a route job against the real disposable stack, wait for it to
-      complete, then wait for the (mocked) explanation to appear in the same job's snapshot.
+      complete, then wait for the (mocked) explanation to appear in the same job's `result`.
 
 ## 8. Surface the route explanation in the frontend
 

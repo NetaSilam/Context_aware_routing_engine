@@ -69,13 +69,15 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
   deterministic canned response and makes no network call at all — not just a stubbed HTTP layer,
   the client function itself branches before ever constructing a request.
 - **Route explanation trigger:** when a route job's Celery task (`route_job_tasks.py`) finishes
-  writing the completed job's snapshot, it enqueues a `route_explanation` LLM job carrying the
-  chosen candidate's cost breakdown and the user's scoring context directly as task arguments (not
+  writing the job's `completed` row, it enqueues a `route_explanation` LLM job carrying the chosen
+  candidate's cost breakdown and the user's scoring context directly as task arguments (not
   re-derived from the database by the LLM worker, to keep the LLM module decoupled from routing's
-  internal snapshot shape). The `llm-worker` calls `explain_route`, then merges the result into the
-  existing `route_jobs.snapshot` JSONB (`snapshot || jsonb_build_object('llm_explanation', ...)`) —
-  no new column on `route_jobs`, consistent with `ROUTING_FEATURE_PRD.md`'s existing "complete
-  results use versioned JSONB snapshots" decision rather than a parallel relational table.
+  internal result shape). The `llm-worker` calls `explain_route`, then merges the result into the
+  existing `route_jobs.result` JSONB — the column the worker already writes `candidates`/
+  `chosen_index`/`safety_weight`/`time_weight` into (`route_job_tasks.py`'s `_calculate_result`) —
+  via `result || jsonb_build_object('llm_explanation', ...)`. No new column on `route_jobs`, and
+  note `route_jobs.snapshot` is a *different* existing column (the request inputs at submission
+  time, written once before scoring runs) — the explanation must not be merged into that one.
 
 ## User Stories
 
@@ -118,7 +120,8 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    nullable `llm_hazard_type_suggested`, `llm_severity`, `duplicate_of_post_id` columns rather than
    requiring a join for the common read path (the feed already reads denormalized counters the
    same way — see `FORUM_FEATURE_PRD.md`'s posts table). `route_jobs` gains **no new column**;
-   its explanation lives inside the existing `snapshot` JSONB (decision 11 below).
+   its explanation lives inside the existing `result` JSONB (decision 11 below) — not `snapshot`,
+   which is a different existing column holding the request inputs, not the scored output.
 4. **Fill-time heuristic.** `estimate_duration_ms(kind, input_chars, candidate_count)` is a pure
    function: a fixed base cost plus a per-character cost for `triage`, and additionally a
    per-candidate cost for `dedup_check` (since a dedup job compares against `candidate_count`
@@ -159,16 +162,19 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
     v1 — avoids a whole class of "stale classification vs. edited content" bugs for a feature
     that is enrichment, not load-bearing. Worth a "future work" mention, not worth building now.
 11. **Route explanation trigger and storage.** The route job Celery task enqueues a
-    `route_explanation` LLM job immediately after it writes the job's `completed` snapshot (not
+    `route_explanation` LLM job immediately after it writes the job's `completed` row (not
     before — the explanation must describe a route that was actually chosen, and must never delay
     or block the route result the user is waiting on). `explain_route` receives the chosen
     candidate's `duration_seconds`, `historical_accident_density_per_km`, `final_cost` breakdown,
     and the user's `driving_experience`/`vehicle_type`/time-of-day context — the same inputs
     `route_scoring_service.py` already computed, passed as task arguments, not re-queried. The
     `llm-worker` writes the result back with
-    `UPDATE app.route_jobs SET snapshot = snapshot || jsonb_build_object('llm_explanation', :text) WHERE id = :id`.
-    Same fail-open behavior as decision 6: a failed/errored explanation job leaves `llm_explanation`
-    absent from the snapshot; the route result is complete and usable without it.
+    `UPDATE app.route_jobs SET result = result || jsonb_build_object('llm_explanation', :text) WHERE id = :id`
+    — merging into the `result` column the worker already populates with `candidates`/
+    `chosen_index`/etc. (`route_job_tasks.py`'s `_calculate_result`), not the `snapshot` column
+    (that one holds the request inputs, unrelated to the scored output). Same fail-open behavior
+    as decision 6: a failed/errored explanation job leaves `llm_explanation` absent from `result`;
+    the route result is complete and usable without it.
 12. **Route explanation reuses the fast queue.** A single explanation call has the same rough cost
     shape as a single triage call (one document in, one short document out) — `estimate_duration_ms`
     classifies it the same way triage is classified, so it does not need a third queue.
@@ -201,7 +207,7 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    with how `fake_osrm`/`fake_geocoder` exist as real HTTP doubles for *those* upstreams but an
    in-process branch is simpler and sufficient here since there is exactly one call shape.
 7. **Route explanation coverage.** A completed route job eventually gets a non-empty
-   `llm_explanation` in its snapshot (mocked client, real Celery/Postgres); a simulated provider
+   `llm_explanation` in its `result` (mocked client, real Celery/Postgres); a simulated provider
    failure leaves the route job's existing fields (candidates, chosen index, cost breakdown) fully
    intact and `llm_explanation` simply absent — the route result was never gated on this call.
 
