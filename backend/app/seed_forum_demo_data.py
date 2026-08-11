@@ -282,6 +282,64 @@ def _recompute_counters(connection: psycopg.Connection[dict]) -> None:
     )
 
 
+def _backfill_missing_triage(connection: psycopg.Connection[dict]) -> None:
+    """Enqueue triage for every active post that was never classified — not scoped to this
+    run's seeded posts, deliberately: this also catches real (non-seed) posts created before the
+    LLM feature existed, or any post whose triage job failed to ever get enqueued. The NOT EXISTS
+    guard skips posts that already have a queued/running triage job, so calling this on every
+    container start (seed_forum_demo_data.py runs at every startup, not just the first) never
+    piles up duplicate jobs for the same post while a previous attempt is still in flight — a
+    genuinely failed attempt is retried on the next start, which is the intended self-healing
+    behavior. Fail-open (PRD decision 6): a Redis/broker problem here must never fail the seed
+    step the rest of container startup depends on — the caller wraps this in a bare except."""
+    from app.llm.tasks import enqueue_triage
+
+    rows = connection.execute(
+        """
+        SELECT p.id, p.body FROM app.forum_posts p
+        WHERE p.status = 'active'
+          AND p.llm_hazard_type_suggested IS NULL
+          AND p.llm_severity IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM app.llm_jobs j
+              WHERE j.subject_post_id = p.id
+                AND j.kind = 'triage'
+                AND j.status IN ('queued', 'running')
+          )
+        """
+    ).fetchall()
+    for row in rows:
+        enqueue_triage(connection, subject_post_id=str(row["id"]), input_chars=len(row["body"]))
+
+
+def _backfill_missing_dedup_checks(connection: psycopg.Connection[dict]) -> None:
+    """Enqueue a dedup check for every active, already-triaged post that has never had one
+    attempted — not scoped to this run's seeded posts, for the same reason as
+    _backfill_missing_triage. Also covers a real gap found via live usage: posts created without
+    coordinates never got a dedup job at all until the author-scoped fallback was added to
+    `enqueue_dedup_check_if_applicable` (see app/llm/tasks.py's _find_dedup_candidates_for_post),
+    so any such post that predates that fix needs a first attempt now. Unlike the triage backfill,
+    a post that already has a dedup_check job in *any* state (including 'failed') is skipped —
+    dedup is a secondary enrichment on top of triage, and retrying failures indefinitely on every
+    restart risks masking a real, persistent problem rather than a one-off startup race."""
+    from app.llm.tasks import enqueue_dedup_check_if_applicable
+
+    rows = connection.execute(
+        """
+        SELECT p.id FROM app.forum_posts p
+        WHERE p.status = 'active'
+          AND p.llm_hazard_type_suggested IS NOT NULL
+          AND p.duplicate_of_post_id IS NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM app.llm_jobs j
+              WHERE j.subject_post_id = p.id AND j.kind = 'dedup_check'
+          )
+        """
+    ).fetchall()
+    for row in rows:
+        enqueue_dedup_check_if_applicable(connection, str(row["id"]))
+
+
 def seed_forum_demo_data(database_url: str) -> dict[str, int]:
     with psycopg.connect(synchronous_database_url(database_url), row_factory=dict_row) as connection:
         with connection.transaction():
@@ -291,8 +349,20 @@ def seed_forum_demo_data(database_url: str) -> dict[str, int]:
             comment_ids = _seed_comments(connection, user_ids, post_ids)
             _seed_votes(connection, user_ids, post_ids, comment_ids)
             _recompute_counters(connection)
+        try:
+            _backfill_missing_triage(connection)
+        except Exception:
+            pass
+        try:
+            _backfill_missing_dedup_checks(connection)
+        except Exception:
+            pass
     # Stable totals only (not "rows inserted this run"), so the report is identical across
-    # repeated idempotent runs and can be compared directly by callers/tests.
+    # repeated idempotent runs and can be compared directly by callers/tests. Deliberately
+    # excludes any triage-backfill count: how many posts still lack classification varies from
+    # moment to moment as async jobs complete, so it can never be a "stable total" like the rest
+    # of this dict — see _backfill_missing_triage's own NOT EXISTS guard for how duplicates are
+    # avoided without needing to report progress here.
     return {
         "users": len(user_ids),
         "posts": len(post_ids),

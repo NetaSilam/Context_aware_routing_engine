@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import psycopg
 from celery import Celery
+from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from app.config import get_settings
@@ -39,60 +40,159 @@ def _find_dedup_candidates(
     hazard_type: str,
     longitude: float,
     latitude: float,
+    subject_created_at: object,
 ) -> list[tuple[str, str]]:
     """Other active posts of the same hazard type, recent and nearby. No PostGIS geometry column
     exists on forum_posts (plain lon/lat floats — see PRD decision 5), so the point-radius search
     is computed on the fly via a geography cast rather than a stored/indexed geometry, consistent
     with this project's general PostGIS usage (extension already enabled) without widening the
-    forum schema for a single feature."""
-    rows = connection.execute(
-        """
-        SELECT id, body FROM app.forum_posts
-        WHERE status = 'active' AND hazard_type = %s AND id != %s
-          AND longitude IS NOT NULL AND latitude IS NOT NULL
-          AND created_at >= now() - (%s || ' days')::interval
-          AND ST_DWithin(
-                ST_MakePoint(longitude, latitude)::geography,
-                ST_MakePoint(%s, %s)::geography,
-                %s
-              )
-        ORDER BY created_at DESC
-        LIMIT %s
-        """,
-        (
-            hazard_type,
-            subject_post_id,
-            settings.llm_dedup_lookback_days,
-            longitude,
-            latitude,
-            settings.llm_dedup_radius_meters,
-            settings.llm_dedup_candidate_limit,
-        ),
-    ).fetchall()
+    forum schema for a single feature. Uses an explicit tuple_row cursor — see
+    enqueue_dedup_check_if_applicable's docstring for why the connection's ambient row_factory
+    cannot be trusted here.
+
+    `created_at < subject_created_at` is deliberate, not incidental: a report can only be "a
+    duplicate of" something that already existed when it was posted, never of something newer.
+    Without this bound, two posts backfilled in the same run (see
+    seed_forum_demo_data.py's _backfill_missing_dedup_checks) could each find the other as a
+    candidate and both end up flagged — the earlier, original report ends up wrongly marked as a
+    duplicate of the later one that actually copied it."""
+    with connection.cursor(row_factory=tuple_row) as cursor:
+        rows = cursor.execute(
+            """
+            SELECT id, body FROM app.forum_posts
+            WHERE status = 'active' AND hazard_type = %s AND id != %s
+              AND longitude IS NOT NULL AND latitude IS NOT NULL
+              AND created_at >= now() - (%s || ' days')::interval
+              AND created_at < %s
+              AND ST_DWithin(
+                    ST_MakePoint(longitude, latitude)::geography,
+                    ST_MakePoint(%s, %s)::geography,
+                    %s
+                  )
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (
+                hazard_type,
+                subject_post_id,
+                settings.llm_dedup_lookback_days,
+                subject_created_at,
+                longitude,
+                latitude,
+                settings.llm_dedup_radius_meters,
+                settings.llm_dedup_candidate_limit,
+            ),
+        ).fetchall()
     return [(str(candidate_id), body) for candidate_id, body in rows]
 
 
-def _enqueue_dedup_check_if_applicable(
+def _find_dedup_candidates_by_author(
+    connection: psycopg.Connection,
+    *,
+    subject_post_id: str,
+    hazard_type: str,
+    author_user_id: int,
+    subject_created_at: object,
+) -> list[tuple[str, str]]:
+    """Fallback dedup scope for a post with no coordinates: the same author's own other recent
+    active posts of the same hazard type. Deliberately narrower than a sitewide text search —
+    comparing a stranger's posts with no location signal at all would be noisy and could produce
+    implausible duplicate claims, but a user re-posting the same hazard themselves is a clean,
+    low-risk signal to check. Uses an explicit tuple_row cursor — see
+    enqueue_dedup_check_if_applicable's docstring for why the connection's ambient row_factory
+    cannot be trusted here. `created_at < subject_created_at` — see _find_dedup_candidates'
+    docstring for why this bound matters."""
+    with connection.cursor(row_factory=tuple_row) as cursor:
+        rows = cursor.execute(
+            """
+            SELECT id, body FROM app.forum_posts
+            WHERE status = 'active' AND hazard_type = %s AND id != %s
+              AND author_user_id = %s
+              AND created_at >= now() - (%s || ' days')::interval
+              AND created_at < %s
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (
+                hazard_type,
+                subject_post_id,
+                author_user_id,
+                settings.llm_dedup_lookback_days,
+                subject_created_at,
+                settings.llm_dedup_candidate_limit,
+            ),
+        ).fetchall()
+    return [(str(candidate_id), body) for candidate_id, body in rows]
+
+
+def _find_dedup_candidates_for_post(
+    connection: psycopg.Connection,
+    *,
+    subject_post_id: str,
+    hazard_type: str,
+    longitude: float | None,
+    latitude: float | None,
+    author_user_id: int,
+    subject_created_at: object,
+) -> list[tuple[str, str]]:
+    """Location-based search (PRD decision 5) when the post has coordinates; otherwise falls
+    back to _find_dedup_candidates_by_author. Amended 2026-08-11: posts with no location are a
+    fully supported, first-class path (PostForm.tsx's lon/lat fields are optional), so "skip
+    dedup entirely" was silently leaving real duplicate reports — e.g. the same user posting an
+    identical report twice — completely unflagged."""
+    if longitude is not None and latitude is not None:
+        return _find_dedup_candidates(
+            connection,
+            subject_post_id=subject_post_id,
+            hazard_type=hazard_type,
+            longitude=longitude,
+            latitude=latitude,
+            subject_created_at=subject_created_at,
+        )
+    return _find_dedup_candidates_by_author(
+        connection,
+        subject_post_id=subject_post_id,
+        hazard_type=hazard_type,
+        author_user_id=author_user_id,
+        subject_created_at=subject_created_at,
+    )
+
+
+def enqueue_dedup_check_if_applicable(
     connection: psycopg.Connection, subject_post_id: str
 ) -> None:
     """Called after a successful triage. Fail-open by design (bare except at the call site,
     like the enqueue step in forum/routes.py's create_post): a problem here must never turn an
-    already-completed triage job into a failure — dedup is enrichment on top of enrichment."""
-    row = connection.execute(
-        "SELECT body, hazard_type, longitude, latitude FROM app.forum_posts WHERE id = %s",
-        (subject_post_id,),
-    ).fetchone()
+    already-completed triage job into a failure — dedup is enrichment on top of enrichment.
+
+    Uses an explicit tuple_row cursor rather than connection.execute(...) directly: this
+    function is called both from run_llm_job (via _connect(), which has no row_factory override
+    and so defaults to tuple rows) and, since the seed script's backfill was added, from
+    seed_forum_demo_data.py's connection — which is opened with row_factory=dict_row for its own
+    unrelated seeding code. Relying on the connection's ambient row_factory silently unpacked a
+    dict's *keys* ("longitude", "latitude", ...) as if they were the row's values, which passed
+    the `is not None` check and only surfaced once fed into a real SQL float parameter — a real
+    bug caught by running this against real pre-existing forum posts, not by the mocked test
+    suite (every existing dedup test's connection happens to use tuple_row already)."""
+    with connection.cursor(row_factory=tuple_row) as cursor:
+        row = cursor.execute(
+            """
+            SELECT body, hazard_type, longitude, latitude, author_user_id, created_at
+            FROM app.forum_posts WHERE id = %s
+            """,
+            (subject_post_id,),
+        ).fetchone()
     if row is None:
         return
-    body, hazard_type, longitude, latitude = row
-    if longitude is None or latitude is None:
-        return  # PRD decision 5: no coordinates, nothing to compare against — skip entirely.
-    candidates = _find_dedup_candidates(
+    body, hazard_type, longitude, latitude, author_user_id, created_at = row
+    candidates = _find_dedup_candidates_for_post(
         connection,
         subject_post_id=subject_post_id,
         hazard_type=hazard_type,
         longitude=longitude,
         latitude=latitude,
+        author_user_id=author_user_id,
+        subject_created_at=created_at,
     )
     if not candidates:
         return
@@ -105,6 +205,27 @@ def _enqueue_dedup_check_if_applicable(
             (id, kind, subject_post_id, status, queue_name, estimated_duration_ms)
         VALUES
             (%s, 'dedup_check', %s, 'queued', %s, %s)
+        """,
+        (job_id, subject_post_id, queue_name, estimated),
+    )
+    connection.commit()
+    run_llm_job.apply_async(args=[str(job_id)], queue=queue_name)
+
+
+def enqueue_triage(connection: psycopg.Connection, *, subject_post_id: str, input_chars: int) -> None:
+    """Enqueue a fresh triage job for a forum post that exists but was never classified — used
+    by the demo-data seed script (app/seed_forum_demo_data.py) to backfill both freshly-seeded
+    and pre-existing unclassified posts, since that script inserts rows directly via SQL and
+    never goes through forum/routes.py's create_post (the only other triage entry point)."""
+    estimated = estimate_duration_ms("triage", input_chars)
+    queue_name = choose_queue(estimated, settings.llm_fast_queue_max_estimated_ms)
+    job_id = uuid4()
+    connection.execute(
+        """
+        INSERT INTO app.llm_jobs
+            (id, kind, subject_post_id, status, queue_name, estimated_duration_ms)
+        VALUES
+            (%s, 'triage', %s, 'queued', %s, %s)
         """,
         (job_id, subject_post_id, queue_name, estimated),
     )
@@ -135,20 +256,23 @@ def _run_triage(connection: psycopg.Connection, subject_post_id: str) -> dict[st
 
 def _run_dedup_check(connection: psycopg.Connection, subject_post_id: str) -> dict[str, Any]:
     row = connection.execute(
-        "SELECT body, hazard_type, longitude, latitude FROM app.forum_posts WHERE id = %s",
+        """
+        SELECT body, hazard_type, longitude, latitude, author_user_id, created_at
+        FROM app.forum_posts WHERE id = %s
+        """,
         (subject_post_id,),
     ).fetchone()
     if row is None:
         raise LookupError(f"forum post {subject_post_id} no longer exists")
-    body, hazard_type, longitude, latitude = row
-    if longitude is None or latitude is None:
-        return {"is_duplicate": False, "candidates_checked": 0}
-    candidates = _find_dedup_candidates(
+    body, hazard_type, longitude, latitude, author_user_id, created_at = row
+    candidates = _find_dedup_candidates_for_post(
         connection,
         subject_post_id=subject_post_id,
         hazard_type=hazard_type,
         longitude=longitude,
         latitude=latitude,
+        author_user_id=author_user_id,
+        subject_created_at=created_at,
     )
     for candidate_id, candidate_body in candidates:
         judgment = asyncio.run(compare_for_duplicate(body, candidate_body))
@@ -246,7 +370,7 @@ def run_llm_job(task, job_id: str, extra_input: dict[str, Any] | None = None) ->
                 result = _run_triage(connection, subject_post_id)
             try:
                 with _connect() as connection:
-                    _enqueue_dedup_check_if_applicable(connection, subject_post_id)
+                    enqueue_dedup_check_if_applicable(connection, subject_post_id)
             except Exception:
                 pass
         elif kind == "dedup_check":

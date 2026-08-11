@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     gemini_base_url: HttpUrl = Field(
         default=HttpUrl("https://generativelanguage.googleapis.com")
     )
-    gemini_model: str = Field(default="gemini-2.0-flash", min_length=1, max_length=100)
+    gemini_model: str = Field(default="gemini-3.5-flash-lite", min_length=1, max_length=100)
     gemini_request_timeout_seconds: float = Field(default=10.0, gt=0.0, le=30.0)
     llm_worker_concurrency: int = Field(default=2, ge=1, le=32)
     llm_fast_queue_max_estimated_ms: int = Field(default=4000, ge=100, le=60_000)

@@ -187,13 +187,22 @@ export default function AccidentAttributionPage(
 
   return (
     <main className="page-shell">
-      <section className="hero-panel">
-        <p className="eyebrow">Accident-to-Corridor Attribution</p>
-        <h1>Deterministic historical accident assignment on top of the canonical corridor layer</h1>
-        <p className="hero-panel__copy">
-          This MVP slice persists every accident, exposes confidence and unresolved reasons, and
-          keeps the result inspectable through a bbox-driven map and detail panel.
-        </p>
+      <section className="hero-panel hero-panel--illustrated">
+        <div className="hero-panel__content">
+          <p className="eyebrow">Accident-to-corridor attribution</p>
+          <h1>Explore exactly which road segments carry historical risk</h1>
+          <p className="hero-panel__copy">
+            Every historical accident is deterministically matched to the canonical corridor it
+            happened on, with a confidence score and matching reason fully inspectable — the
+            same data that powers every route recommendation.
+          </p>
+          <ul className="hero-panel__features">
+            <li>📍 Bbox-driven map</li>
+            <li>📊 Confidence scored</li>
+            <li>🧭 Fully inspectable</li>
+          </ul>
+        </div>
+        <div className="hero-panel__art" role="img" aria-label="A road leading toward a city skyline, marked with a safety pin" />
       </section>
 
       {summaryError ? <p className="error-banner">{summaryError}</p> : null}

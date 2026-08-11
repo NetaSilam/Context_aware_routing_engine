@@ -26,8 +26,8 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function notificationPage(unreadCount: number) {
-  return { items: [], offset: 0, limit: 30, has_more: false, unread_count: unreadCount };
+function notificationPage(unreadCount: number, items: unknown[] = []) {
+  return { items, offset: 0, limit: 30, has_more: false, unread_count: unreadCount };
 }
 
 beforeEach(() => {
@@ -89,7 +89,58 @@ describe("NotificationIndicator", () => {
     expect(await screen.findByText("7")).toBeTruthy();
   });
 
-  it("marks all notifications read and resets the badge when clicked", async () => {
+  it("opens a panel listing notifications when the toggle is clicked", async () => {
+    const user = userEvent.setup();
+    const items = [
+      { id: "n1", kind: "new_dm", payload: { sender_email: "driver@example.com" }, created_at: "2026-01-01T00:00:00Z", read_at: null },
+      { id: "n2", kind: "new_comment", payload: { actor_label: "reporter@example.com" }, created_at: "2026-01-01T00:00:00Z", read_at: null },
+      { id: "n3", kind: "new_vote", payload: { target_type: "post", value: "up" }, created_at: "2026-01-01T00:00:00Z", read_at: "2026-01-01T00:00:00Z" },
+    ];
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/notifications?")) return Promise.resolve(jsonResponse(notificationPage(2, items)));
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NotificationIndicator />);
+
+    MockEventSource.instances[0].onopen?.();
+    await screen.findByText("2");
+
+    await user.click(screen.getByRole("button", { name: /notifications/i }));
+
+    expect(await screen.findByText("New message from driver@example.com")).toBeTruthy();
+    expect(screen.getByText("reporter@example.com commented on your report")).toBeTruthy();
+    expect(screen.getByText("Someone upvoted your report")).toBeTruthy();
+  });
+
+  it("marks an individual unread notification as read when clicked", async () => {
+    const user = userEvent.setup();
+    const items = [
+      { id: "n1", kind: "new_dm", payload: { sender_email: "driver@example.com" }, created_at: "2026-01-01T00:00:00Z", read_at: null },
+    ];
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/notifications?")) return Promise.resolve(jsonResponse(notificationPage(1, items)));
+      if (url === "/api/notifications/n1/read" && init?.method === "POST") return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NotificationIndicator />);
+
+    MockEventSource.instances[0].onopen?.();
+    await screen.findByText("1");
+    await user.click(screen.getByRole("button", { name: /notifications/i }));
+    await user.click(await screen.findByText("New message from driver@example.com"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/notifications/n1/read",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    expect(screen.queryByText("1")).toBeNull();
+  });
+
+  it("marks all notifications read and resets the badge when 'Mark all as read' is clicked", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
@@ -102,8 +153,10 @@ describe("NotificationIndicator", () => {
 
     MockEventSource.instances[0].onopen?.();
     await screen.findByText("4");
-
     await user.click(screen.getByRole("button", { name: /notifications/i }));
+    await screen.findByText("No notifications yet.");
+
+    await user.click(screen.getByRole("button", { name: "Mark all as read" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/notifications/read-all",

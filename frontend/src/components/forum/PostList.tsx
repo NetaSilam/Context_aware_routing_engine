@@ -30,6 +30,13 @@ export default function PostList(props: PostListProps): JSX.Element {
         </select>
       </label>
 
+      <p className="forum-feed__legend">
+        🤖 <strong>AI severity</strong> estimates how urgently drivers should treat a hazard
+        (Low/Medium/High) from the report's own text. <strong>AI duplicate</strong> flags reports
+        that likely describe the same hazard as another nearby report. Neither is verified by a
+        person — treat them as a helpful hint, not a guarantee.
+      </p>
+
       {props.items.length === 0 ? <p>No hazard reports yet.</p> : null}
 
       <ul className="forum-feed__list">
@@ -45,14 +52,23 @@ export default function PostList(props: PostListProps): JSX.Element {
                   ? "Anonymous (you)"
                   : "Anonymous"
                 : post.author_email}{" "}
-              · {post.comment_count} comment{post.comment_count === 1 ? "" : "s"}
+              · {post.comment_count} comment{post.comment_count === 1 ? "" : "s"} ·{" "}
+              {new Date(post.created_at).toLocaleString()}
             </p>
             {post.llm_severity ? (
-              <p className="forum-feed__severity">{SEVERITY_LABELS[post.llm_severity]}</p>
+              <p
+                className="forum-feed__severity"
+                title="AI-estimated urgency, based on the report's own text — not verified by a person."
+              >
+                🤖 AI: {SEVERITY_LABELS[post.llm_severity]}
+              </p>
             ) : null}
             {post.duplicate_of_post_id ? (
-              <p className="forum-feed__duplicate">
-                Possible duplicate of report {post.duplicate_of_post_id}
+              <p
+                className="forum-feed__duplicate"
+                title="AI-detected: this report's text looks similar to a nearby report of the same hazard type."
+              >
+                🤖 AI: possible duplicate of report {post.duplicate_of_post_id}
               </p>
             ) : null}
             <VoteButtons

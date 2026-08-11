@@ -131,6 +131,85 @@ describe("PlanRoutePage", () => {
     )).toBeTruthy();
   });
 
+  it("shows only the result map once a route has completed, not the coordinate picker map too", async () => {
+    const user = userEvent.setup();
+    const completedJob = {
+      id: "53ed1123-13ca-41d2-80b6-d5e5383ff12b", status: "completed",
+      origin_longitude: 34.78, origin_latitude: 32.07,
+      destination_longitude: 34.79, destination_latitude: 32.08,
+      origin_label: null, destination_label: null, created_at: new Date().toISOString(),
+      started_at: new Date().toISOString(), completed_at: new Date().toISOString(),
+      error_code: null, error_message: null, failure: null,
+      result: {
+        schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
+        safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+        reference_risk_p95: 2, low_coverage_threshold: 0.8,
+        risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
+        included_year_start: 2020, included_year_end: 2023,
+        risk_metric_name: "historical_accident_density_per_km", risk_metric_description: "Historical accident density is a historical risk proxy.",
+        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] } }],
+      },
+    };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/route-history?")) return Promise.resolve(new Response(JSON.stringify({ items: [], offset: 0, limit: 10, has_more: false }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      if (url === "/api/route-jobs" && init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ id: completedJob.id, status: "queued" }), { status: 202, headers: { "Content-Type": "application/json" } }));
+      return Promise.resolve(new Response(JSON.stringify(completedJob), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} />);
+
+    expect(screen.getByLabelText("Coordinate selection map")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Compare routes" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Route job completed" })).toBeTruthy());
+
+    expect(screen.queryByLabelText("Coordinate selection map")).toBeNull();
+    expect(screen.getByLabelText("Route result map")).toBeTruthy();
+  });
+
+  it("keeps polling briefly after completion to pick up a delayed LLM explanation", async () => {
+    vi.useFakeTimers();
+    const jobId = "53ed1123-13ca-41d2-80b6-d5e5383ff12b";
+    window.history.replaceState({}, "", `/?routeJob=${jobId}`);
+    const baseJob = {
+      id: jobId, status: "completed",
+      origin_longitude: 34.78, origin_latitude: 32.07,
+      destination_longitude: 34.79, destination_latitude: 32.08,
+      origin_label: null, destination_label: null, created_at: new Date().toISOString(),
+      started_at: new Date().toISOString(), completed_at: new Date().toISOString(),
+      error_code: null, error_message: null, failure: null,
+      result: {
+        schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
+        safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+        reference_risk_p95: 2, low_coverage_threshold: 0.8,
+        risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
+        included_year_start: 2020, included_year_end: 2023,
+        risk_metric_name: "historical_accident_density_per_km", risk_metric_description: "Historical accident density is a historical risk proxy.",
+        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] } }],
+      },
+    };
+    let explanationReady = false;
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/route-history?")) return Promise.resolve(new Response(JSON.stringify({ items: [], offset: 0, limit: 10, has_more: false }), { status: 200, headers: { "Content-Type": "application/json" } }));
+      return Promise.resolve(new Response(JSON.stringify({
+        ...baseJob,
+        llm_explanation: explanationReady ? "Chosen for its lower historical risk." : null,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} />);
+
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.queryByText("Chosen for its lower historical risk.")).toBeNull();
+
+    explanationReady = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+
+    expect(screen.getByText("Chosen for its lower historical risk.")).toBeTruthy();
+  });
+
   it("uses bounded polling delays and stops polling when unmounted", async () => {
     vi.useFakeTimers();
     const jobId = "53ed1123-13ca-41d2-80b6-d5e5383ff12b";

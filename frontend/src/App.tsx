@@ -2,6 +2,7 @@ import React from "react";
 
 import { getMe, logout } from "./api/auth";
 import AuthPanel from "./components/auth/AuthPanel";
+import Logo from "./components/Logo";
 import PageSwitcher, { type AppPageId } from "./components/navigation/PageSwitcher";
 import NotificationIndicator from "./components/notifications/NotificationIndicator";
 import AccidentAttributionPage from "./pages/AccidentAttributionPage";
@@ -29,10 +30,24 @@ export default function App(props: AppProps): JSX.Element {
   }, []);
 
   if (user === undefined) {
-    return <main className="page-shell"><p>Loading account…</p></main>;
+    return (
+      <main className="page-shell">
+        <div className="auth-gate">
+          <Logo variant="light" height={84} />
+        </div>
+        <p>Loading account…</p>
+      </main>
+    );
   }
   if (user === null) {
-    return <main className="page-shell"><AuthPanel onAuthenticated={setUser} /></main>;
+    return (
+      <main className="page-shell">
+        <div className="auth-gate">
+          <Logo variant="light" height={84} />
+        </div>
+        <AuthPanel onAuthenticated={setUser} />
+      </main>
+    );
   }
 
   const pages: Record<AppPageId, JSX.Element> = {
@@ -45,13 +60,26 @@ export default function App(props: AppProps): JSX.Element {
 
   return (
     <>
-      <header className="app-session-bar">
-        <span>Signed in as {user.email}</span>
-        <NotificationIndicator />
-        <button type="button" onClick={() => void logout().then(() => setUser(null))}>Sign out</button>
+      <header className="site-header">
+        <Logo variant="light" height={150} />
+        <div className="site-header__session">
+          <NotificationIndicator />
+          <span className="site-header__user">{user.email}</span>
+          <button
+            type="button"
+            className="ghost-button"
+            onClick={() => void logout().then(() => setUser(null))}
+          >
+            Sign out
+          </button>
+        </div>
       </header>
       <PageSwitcher activePage={activePage} onPageChange={setActivePage} />
       {pages[activePage]}
+      <footer className="site-footer">
+        <Logo variant="dark" />
+        <p className="site-footer__copy">Context-aware safe routing, built on real historical accident data.</p>
+      </footer>
     </>
   );
 }

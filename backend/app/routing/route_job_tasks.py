@@ -237,28 +237,47 @@ def _calculate_result(job: tuple[Any, ...]) -> tuple[dict[str, Any], int, int]:
     return result, scoring.chosen_index, len(scoring.candidates)
 
 
+def _candidate_summary(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "distance_m": candidate["distance_m"],
+        "duration_seconds": candidate["duration_seconds"],
+        "historical_accident_density_per_km": candidate["historical_accident_density_per_km"],
+        "final_cost": candidate["final_cost"],
+    }
+
+
 def _enqueue_route_explanation_if_possible(
     job_id: str, result: dict[str, Any], chosen_index: int, snapshot: dict[str, Any]
 ) -> None:
     """Called immediately after the job's completed row is written. Fail-open by design (PRD
     decision 6/11): a problem building or enqueueing the explanation job must never turn an
-    already-completed route job into a failure — the caller wraps this in a bare except."""
+    already-completed route job into a failure — the caller wraps this in a bare except.
+
+    Includes every alternative candidate's numbers (not just the chosen one) so the explanation
+    can genuinely compare the pick against its alternatives instead of describing it in
+    isolation — see PRD decision 11's amendment."""
     chosen = next(
         candidate
         for candidate in result["candidates"]
         if candidate["candidate_index"] == chosen_index
     )
+    alternatives = [
+        _candidate_summary(candidate)
+        for candidate in result["candidates"]
+        if candidate["candidate_index"] != chosen_index
+    ]
     enqueue_route_explanation(
         route_job_id=job_id,
         cost_breakdown={
-            "duration_seconds": chosen["duration_seconds"],
-            "historical_accident_density_per_km": chosen["historical_accident_density_per_km"],
-            "final_cost": chosen["final_cost"],
+            "chosen": _candidate_summary(chosen),
+            "alternatives": alternatives,
         },
         user_context={
             "driving_experience": snapshot["driving_experience"],
             "vehicle_type": snapshot["vehicle_type"],
             "time_context": result["time_context"],
+            "safety_weight": result["safety_weight"],
+            "time_weight": result["time_weight"],
         },
     )
 

@@ -195,7 +195,15 @@ Startup is deliberately split into stages:
 - `backend/app/seed_forum_demo_data.py` cold-seeds the forum with 6 `is_seed_account=true` users,
   9 historical posts (all 7 hazard types), 11 comments, and 24 votes, using deterministic
   `uuid5`-derived IDs and unique-constraint upserts so re-running it converges to the same state
-  instead of duplicating rows. Runs last in the `initialize` service's command chain.
+  instead of duplicating rows. Runs last in the `initialize` service's command chain, on **every**
+  container start, not just the first. It also backfills LLM triage/dedup for any active post
+  (seeded or real, not scoped to this run) that was never classified/checked —
+  `_backfill_missing_triage`/`_backfill_missing_dedup_checks`, each idempotent via a `NOT EXISTS`
+  guard against `app.llm_jobs` — since posts inserted directly via SQL here bypass
+  `forum/routes.py`'s `create_post`, the only other place triage gets triggered. Both backfills
+  are wrapped in a bare `try/except: pass`: a Redis/broker problem must never fail the seed step
+  the rest of container startup depends on (this is also why `initialize` now depends on
+  `redis: condition: service_healthy` in `compose.yaml` — it never needed Redis before this).
 - `backend/app/benchmark_corridor_matchers.py`,
   `backend/app/generate_corridor_matcher_overlays.py`, and
   `backend/app/generate_real_route_corpus.py` support matcher measurement and visual evidence;
@@ -214,11 +222,20 @@ Startup is deliberately split into stages:
 - `frontend/src/pages/ForumPage.tsx` owns the hazard-reporting feed: filtering, pagination, post
   creation, and opening a post into `components/forum/PostDetailPanel.tsx` for comments and
   voting. Both `components/forum/PostList.tsx` and `PostDetailPanel.tsx` also render the LLM
-  triage/dedup output — a severity pill (`SEVERITY_LABELS`, `types/forum.ts`) when `llm_severity`
-  is set, and a "possible duplicate of ..." line when `duplicate_of_post_id` is set — with neither
-  rendering while those fields are still `null` (job not yet completed). There is no live
-  push/poll for these fields; they surface on the feed's normal fetch points (initial load,
-  filter change, load more, closing a report's detail view), not while a screen sits idle.
+  triage/dedup output — a "🤖 AI: ..." severity pill (`SEVERITY_LABELS`, `types/forum.ts`) when
+  `llm_severity` is set, and a "🤖 AI: possible duplicate of ..." line when `duplicate_of_post_id`
+  is set — with neither rendering while those fields are still `null` (job not yet completed).
+  **Update (2026-08-11):** the feed's normal fetch points (initial load, filter change, load
+  more, closing a report's detail view) were never enough on their own — a user who stays on an
+  unchanged feed screen right after posting would never see the classification land, since triage
+  is async and typically takes a few seconds. `ForumPage.tsx` now tracks
+  `pendingClassificationPostId` (set right after `handleCreatePost` succeeds, only if the create
+  response doesn't already carry a classification) and bounded-polls `getPost(id)` on a fixed
+  1.5s interval (up to 8 attempts, same shape as `PlanRoutePage.tsx`'s route-explanation
+  follow-up poll) until `llm_severity`/`llm_hazard_type_suggested`/`duplicate_of_post_id` appears,
+  merging the result into the specific `posts` list entry in place. Only the just-created post is
+  ever live-polled this way — older posts already went through their async window before the
+  viewer ever saw them.
 - `frontend/src/pages/InboxPage.tsx` owns direct messaging: the conversation list, starting a new
   conversation by recipient user ID, and opening a thread into
   `components/messages/ConversationThread.tsx` for sending text/media replies.
