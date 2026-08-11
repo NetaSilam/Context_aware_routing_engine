@@ -15,6 +15,7 @@ interface CoordinateDraft {
 interface CoordinateAcquisitionProps {
   disabled: boolean;
   onSubmit: (payload: SubmitRouteJobRequest) => Promise<void>;
+  hideMap?: boolean;
 }
 
 const INITIAL_COORDINATES: Record<Endpoint, CoordinateDraft> = {
@@ -35,7 +36,7 @@ function MapClickHandler({ onClick }: { onClick: (latitude: number, longitude: n
   return null;
 }
 
-export default function CoordinateAcquisition({ disabled, onSubmit }: CoordinateAcquisitionProps): JSX.Element {
+export default function CoordinateAcquisition({ disabled, onSubmit, hideMap = false }: CoordinateAcquisitionProps): JSX.Element {
   const [coordinates, setCoordinates] = useState(INITIAL_COORDINATES);
   const [mapTarget, setMapTarget] = useState<Endpoint>("origin");
   const [searchQueries, setSearchQueries] = useState<Record<Endpoint, string>>({ origin: "", destination: "" });
@@ -62,6 +63,7 @@ export default function CoordinateAcquisition({ disabled, onSubmit }: Coordinate
       },
     }));
     setSearchResults((current) => ({ ...current, [endpoint]: [] }));
+    setSearchCompleted((current) => ({ ...current, [endpoint]: false }));
     setSearchError(null);
   }
 
@@ -132,17 +134,24 @@ export default function CoordinateAcquisition({ disabled, onSubmit }: Coordinate
         {(["origin", "destination"] as Endpoint[]).map((endpoint) => (
           <section key={endpoint} aria-label={`${endpoint} address search`}>
             <h3>{endpoint === "origin" ? "Origin" : "Destination"} address</h3>
-            <label className="filter-field">
-              Address
-              <input
-                maxLength={200}
-                value={searchQueries[endpoint]}
-                onChange={(event) => setSearchQueries((current) => ({ ...current, [endpoint]: event.target.value }))}
-              />
-            </label>
-            <button type="button" className="ghost-button" disabled={searching !== null} onClick={() => void runSearch(endpoint)}>
-              {searching === endpoint ? "Searching…" : `Search ${endpoint}`}
-            </button>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void runSearch(endpoint);
+              }}
+            >
+              <label className="filter-field">
+                Address
+                <input
+                  maxLength={200}
+                  value={searchQueries[endpoint]}
+                  onChange={(event) => setSearchQueries((current) => ({ ...current, [endpoint]: event.target.value }))}
+                />
+              </label>
+              <button type="submit" className="ghost-button" disabled={searching !== null}>
+                {searching === endpoint ? "Searching…" : `Search ${endpoint}`}
+              </button>
+            </form>
             {searchCompleted[endpoint] && searchResults[endpoint].length === 0 ? <p>No addresses found.</p> : null}
             <ul className="address-results">
               {searchResults[endpoint].map((match) => (
@@ -157,19 +166,23 @@ export default function CoordinateAcquisition({ disabled, onSubmit }: Coordinate
       {searchError ? <p role="alert" className="error-banner">{searchError}</p> : null}
       <p className="geocoding-attribution">Address search data © OpenStreetMap contributors.</p>
 
-      <div className="map-target-controls" aria-label="Map click target">
-        <span>Next map click sets:</span>
-        <label><input type="radio" name="map-target" checked={mapTarget === "origin"} onChange={() => setMapTarget("origin")} /> Origin</label>
-        <label><input type="radio" name="map-target" checked={mapTarget === "destination"} onChange={() => setMapTarget("destination")} /> Destination</label>
-      </div>
-      <div className="map-shell" aria-label="Coordinate selection map">
-        <MapContainer center={[32.0, 34.9]} zoom={8} className="corridor-map">
-          <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-          <MapClickHandler onClick={selectMapCoordinate} />
-          {markerPosition("origin") ? <Marker position={markerPosition("origin") as [number, number]} title="Origin marker" /> : null}
-          {markerPosition("destination") ? <Marker position={markerPosition("destination") as [number, number]} title="Destination marker" /> : null}
-        </MapContainer>
-      </div>
+      {hideMap ? null : (
+        <>
+          <div className="map-target-controls" aria-label="Map click target">
+            <span>Next map click sets:</span>
+            <label><input type="radio" name="map-target" checked={mapTarget === "origin"} onChange={() => setMapTarget("origin")} /> Origin</label>
+            <label><input type="radio" name="map-target" checked={mapTarget === "destination"} onChange={() => setMapTarget("destination")} /> Destination</label>
+          </div>
+          <div className="map-shell" aria-label="Coordinate selection map">
+            <MapContainer center={[32.0, 34.9]} zoom={8} className="corridor-map">
+              <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <MapClickHandler onClick={selectMapCoordinate} />
+              {markerPosition("origin") ? <Marker position={markerPosition("origin") as [number, number]} title="Origin marker" /> : null}
+              {markerPosition("destination") ? <Marker position={markerPosition("destination") as [number, number]} title="Destination marker" /> : null}
+            </MapContainer>
+          </div>
+        </>
+      )}
 
       <form onSubmit={submit} className="filters-grid" aria-label="Route coordinate form">
         <label className="filter-field">Origin longitude<input required type="number" step="any" value={coordinates.origin.longitude} onChange={(event) => updateNumeric("origin", "longitude", event.target.value)} /></label>

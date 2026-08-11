@@ -33,6 +33,46 @@ export default function ForumPage(): JSX.Element {
   const [commentsHasMore, setCommentsHasMore] = useState(false);
 
   const [dashboard, setDashboard] = useState<DashboardSummary | null>(null);
+  const [pendingClassificationPostId, setPendingClassificationPostId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pendingClassificationPostId) return;
+    let stopped = false;
+    let timeoutId: number | undefined;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 8;
+    const POLL_MS = 1500;
+
+    async function poll() {
+      if (stopped) return;
+      try {
+        const updated = await getPost(pendingClassificationPostId as string);
+        if (stopped) return;
+        if (updated.llm_severity || updated.llm_hazard_type_suggested || updated.duplicate_of_post_id) {
+          setPosts((current) =>
+            current.map((post) =>
+              post.id === updated.id
+                ? {
+                    ...post,
+                    llm_hazard_type_suggested: updated.llm_hazard_type_suggested,
+                    llm_severity: updated.llm_severity,
+                    duplicate_of_post_id: updated.duplicate_of_post_id,
+                  }
+                : post,
+            ),
+          );
+          return;
+        }
+      } catch {
+        // Best-effort enrichment poll; a failure here must not disturb the already-created post.
+      }
+      attempts += 1;
+      if (attempts >= MAX_ATTEMPTS) return;
+      timeoutId = window.setTimeout(() => void poll(), POLL_MS);
+    }
+    void poll();
+    return () => { stopped = true; if (timeoutId !== undefined) window.clearTimeout(timeoutId); };
+  }, [pendingClassificationPostId]);
 
   async function loadFeed(filter: HazardType | "") {
     setFeedError(null);
@@ -98,6 +138,9 @@ export default function ForumPage(): JSX.Element {
     setDashboard((current) =>
       current ? { ...current, post_count: current.post_count + 1 } : current,
     );
+    if (!created.llm_severity && !created.llm_hazard_type_suggested) {
+      setPendingClassificationPostId(created.id);
+    }
   }
 
   async function openPost(postId: string) {
@@ -173,19 +216,28 @@ export default function ForumPage(): JSX.Element {
 
   return (
     <main className="page-shell">
-      <section className="hero-panel">
-        <p className="eyebrow">Community reports</p>
-        <h1>Hazard reporting feed</h1>
-        <p className="hero-panel__copy">
-          Report potholes, flooding, broken signals, and other road hazards. Confirm or refute
-          reports from other drivers with a vote.
-        </p>
-        {dashboard ? (
-          <p className="forum-feed__meta">
-            Your reports: {dashboard.post_count} · Your comments: {dashboard.comment_count} · Net
-            votes received: {dashboard.net_votes_received}
+      <section className="hero-panel hero-panel--illustrated">
+        <div className="hero-panel__content">
+          <p className="eyebrow">Community hazard reports</p>
+          <h1>See what other drivers are seeing, in real time</h1>
+          <p className="hero-panel__copy">
+            Report potholes, flooding, broken signals, and other road hazards. Every report is
+            automatically classified for severity and checked against nearby reports, so the
+            feed stays clean and trustworthy.
           </p>
-        ) : null}
+          <ul className="hero-panel__features">
+            <li>✓ Confirmed by the community</li>
+            <li>🤖 AI-classified severity</li>
+            <li>🔁 Duplicate detection</li>
+          </ul>
+          {dashboard ? (
+            <p className="forum-feed__meta">
+              Your reports: {dashboard.post_count} · Your comments: {dashboard.comment_count} · Net
+              votes received: {dashboard.net_votes_received}
+            </p>
+          ) : null}
+        </div>
+        <div className="hero-panel__art" role="img" aria-label="A road leading toward a city skyline, marked with a safety pin" />
       </section>
 
       {feedError ? <p className="error-banner">{feedError}</p> : null}

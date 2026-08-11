@@ -15,6 +15,14 @@ interface PlanRoutePageProps {
   onProfileUpdated: (user: UserProfile) => void;
 }
 
+function initials(email: string): string {
+  return email.slice(0, 2).toUpperCase();
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -34,12 +42,34 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
     if (!jobId) return;
     let stopped = false;
     let timeoutId: number | undefined;
+
+    const EXPLANATION_MAX_ATTEMPTS = 8;
+    const EXPLANATION_POLL_MS = 1500;
+    let explanationAttempts = 0;
+
+    async function pollExplanation() {
+      if (stopped || explanationAttempts >= EXPLANATION_MAX_ATTEMPTS) return;
+      explanationAttempts += 1;
+      try {
+        const loaded = await getRouteJob(jobId as string);
+        if (stopped) return;
+        if (loaded.llm_explanation) { setJob(loaded); return; }
+      } catch {
+        // Best-effort enrichment poll; a failure here must not disturb the already-completed route.
+      }
+      timeoutId = window.setTimeout(() => void pollExplanation(), EXPLANATION_POLL_MS);
+    }
+
     async function poll() {
       try {
         const loaded = await getRouteJob(jobId as string);
         if (stopped) return;
         setJob(loaded);
-        if (loaded.status === "completed") { setRouteStatus("completed"); return; }
+        if (loaded.status === "completed") {
+          setRouteStatus("completed");
+          if (!loaded.llm_explanation) void pollExplanation();
+          return;
+        }
         if (loaded.status === "failed") { setRouteStatus("failed"); setRouteError(loaded.error_message ?? "Route processing failed."); return; }
         setRouteStatus("polling");
         const delays = [500, 1000, 2000];
@@ -126,25 +156,45 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
 
   return (
     <main className="page-shell">
-      <section className="hero-panel">
-        <p className="eyebrow">Context-Aware Safe Routing</p>
-        <h1>Risk-aware route planning</h1>
-        <p className="hero-panel__copy">
-          Route requests will run as background jobs so progress and completed results can be
-          recovered without keeping one browser request open.
-        </p>
+      <section className="hero-panel hero-panel--illustrated">
+        <div className="hero-panel__content">
+          <p className="eyebrow">Context-Aware Safe Routing</p>
+          <h1>Get a route that weighs your safety, not just your time</h1>
+          <p className="hero-panel__copy">
+            Every recommendation blends travel time with historical accident risk near each
+            candidate route, weighted by your driving experience, vehicle type, and the time of
+            day.
+          </p>
+          <ul className="hero-panel__features">
+            <li>✓ Safer roads</li>
+            <li>🕐 Smarter times</li>
+            <li>📊 Personalized for you</li>
+          </ul>
+        </div>
+        <div className="hero-panel__art" role="img" aria-label="A road leading toward a city skyline, marked with a safety pin" />
       </section>
 
-      <section className="filters-panel" aria-label="Current profile">
-        <p>
-          Signed in as <strong>{props.user.email}</strong> — {props.user.driving_experience},{" "}
-          {props.user.vehicle_type}
-          {props.user.avoid_highways ? ", avoids highways" : ""}
-          {props.user.avoid_tolls ? ", avoids tolls" : ""}.
-        </p>
-        <button type="button" className="ghost-button" onClick={() => setEditing(!editing)}>
-          Edit route preferences
-        </button>
+      <section className="session-card" aria-label="Current profile">
+        <div className="session-card__row">
+          <div className="session-card__identity">
+            <span className="session-card__avatar" aria-hidden="true">{initials(props.user.email)}</span>
+            <div>
+              <p className="session-card__signed-in">
+                Signed in as <strong>{props.user.email}</strong>
+              </p>
+              <p className="session-card__meta">
+                {capitalize(props.user.driving_experience)} driver · {capitalize(props.user.vehicle_type)}
+                {props.user.avoid_highways ? " · avoids highways" : ""}
+                {props.user.avoid_tolls ? " · avoids tolls" : ""}
+              </p>
+            </div>
+          </div>
+          <div className="session-card__actions">
+            <button type="button" className="ghost-button" onClick={() => setEditing(!editing)}>
+              Edit route preferences
+            </button>
+          </div>
+        </div>
         {editing ? (
           <form onSubmit={savePreferences} aria-label="Route preferences">
             {error ? <p className="error-banner">{error}</p> : null}
@@ -172,8 +222,10 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
       <CoordinateAcquisition
         disabled={routeStatus === "submitting" || routeStatus === "polling"}
         onSubmit={submitRoute}
+        hideMap={routeStatus !== "empty"}
       />
       <RouteJobShell
+        key={job?.id ?? "empty-route-job"}
         status={routeStatus}
         error={routeError ?? undefined}
         result={job?.result}

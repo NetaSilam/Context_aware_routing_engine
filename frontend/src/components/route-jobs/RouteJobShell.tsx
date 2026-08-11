@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { MapContainer, Polyline, TileLayer } from "react-leaflet";
 
 import type { RouteJobResult } from "../../types/routeJobs";
@@ -24,9 +25,11 @@ function percent(value: number): string {
 }
 
 function RouteResult({ result, llmExplanation }: { result: RouteJobResult; llmExplanation?: string | null }): JSX.Element {
+  const [selectedIndex, setSelectedIndex] = useState(result.chosen_index);
   const chosen = result.candidates.find((candidate) => candidate.candidate_index === result.chosen_index) ?? result.candidates[0];
-  const center: [number, number] = chosen
-    ? [chosen.geometry.coordinates[0][1], chosen.geometry.coordinates[0][0]]
+  const highlighted = result.candidates.find((candidate) => candidate.candidate_index === selectedIndex) ?? chosen;
+  const center: [number, number] = highlighted
+    ? [highlighted.geometry.coordinates[0][1], highlighted.geometry.coordinates[0][0]]
     : [31.7, 34.9];
   const hasLowCoverage = result.candidates.some((candidate) => candidate.warning);
 
@@ -34,7 +37,14 @@ function RouteResult({ result, llmExplanation }: { result: RouteJobResult; llmEx
     <div className="route-result">
       {hasLowCoverage ? <p role="alert" className="error-banner">Some routes have incomplete historical corridor coverage. Their risk comparison is less reliable.</p> : null}
       {!result.risk_choice_available ? <p><strong>Only one route was available.</strong> No risk-aware choice between alternatives was possible.</p> : null}
-      {llmExplanation ? <p className="route-explanation">{llmExplanation}</p> : null}
+      {llmExplanation ? (
+        <div className="route-explanation">
+          <p className="route-explanation__heading">
+            AI-generated explanation: why Route {result.chosen_index + 1} is recommended
+          </p>
+          <p>{llmExplanation}</p>
+        </div>
+      ) : null}
       <div className="map-shell" aria-label="Route result map">
         <MapContainer center={center} zoom={12} className="corridor-map">
           <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
@@ -42,15 +52,30 @@ function RouteResult({ result, llmExplanation }: { result: RouteJobResult; llmEx
             <Polyline
               key={candidate.candidate_index}
               positions={candidate.geometry.coordinates.map(([longitude, latitude]) => [latitude, longitude] as [number, number])}
-              pathOptions={{ color: candidate.candidate_index === result.chosen_index ? "#0d7288" : "#777", weight: candidate.candidate_index === result.chosen_index ? 7 : 4 }}
+              pathOptions={{ color: candidate.candidate_index === selectedIndex ? "#0d7288" : "#777", weight: candidate.candidate_index === selectedIndex ? 7 : 4 }}
             />
           ))}
         </MapContainer>
       </div>
+      <p className="route-candidate-grid__hint">Select a route below to highlight it on the map.</p>
       <section aria-label="Route comparison" className="route-candidate-grid">
         {result.candidates.map((candidate) => (
-          <article key={candidate.candidate_index} className="summary-card">
-            <h3>Route {candidate.candidate_index + 1}{candidate.candidate_index === result.chosen_index ? " — recommended" : ""}</h3>
+          <article
+            key={candidate.candidate_index}
+            className={
+              candidate.candidate_index === selectedIndex
+                ? "summary-card summary-card--selected"
+                : "summary-card"
+            }
+          >
+            <button
+              type="button"
+              className="route-candidate-select"
+              aria-pressed={candidate.candidate_index === selectedIndex}
+              onClick={() => setSelectedIndex(candidate.candidate_index)}
+            >
+              Route {candidate.candidate_index + 1}{candidate.candidate_index === result.chosen_index ? " — recommended" : ""}
+            </button>
             <dl>
               <dt>Distance</dt><dd>{(candidate.distance_m / 1000).toFixed(1)} km</dd>
               <dt>Duration</dt><dd>{Math.round(candidate.duration_seconds / 60)} min</dd>

@@ -54,13 +54,15 @@ function baseFetchMock(): ReturnType<typeof vi.fn> {
 describe("ForumPage", () => {
   it("renders the hazard feed and dashboard summary", async () => {
     vi.stubGlobal("fetch", baseFetchMock());
-    render(<ForumPage />);
+    const { container } = render(<ForumPage />);
 
     expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
     expect(await screen.findByText(/Net votes received: 2/)).toBeTruthy();
     expect(screen.getByText(/reporter@example.com/)).toBeTruthy();
-    expect(screen.queryByText(/severity/i)).toBeNull();
-    expect(screen.queryByText(/Possible duplicate/)).toBeNull();
+    // Scoped to the feed item's own classes, not a page-wide text search — the hero banner's
+    // own "AI-classified severity" feature chip also contains the word "severity".
+    expect(container.querySelector(".forum-feed__severity")).toBeNull();
+    expect(container.querySelector(".forum-feed__duplicate")).toBeNull();
   });
 
   it("shows the LLM-suggested severity once classification has completed", async () => {
@@ -81,7 +83,7 @@ describe("ForumPage", () => {
     render(<ForumPage />);
 
     expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
-    expect(screen.getByText("High severity")).toBeTruthy();
+    expect(screen.getByText("🤖 AI: High severity")).toBeTruthy();
   });
 
   it("flags a post as a possible duplicate once the backend has linked it", async () => {
@@ -103,7 +105,7 @@ describe("ForumPage", () => {
     render(<ForumPage />);
 
     expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
-    expect(screen.getByText(`Possible duplicate of report ${originalId}`)).toBeTruthy();
+    expect(screen.getByText(`🤖 AI: possible duplicate of report ${originalId}`)).toBeTruthy();
   });
 
   it("blocks submission until title and description are filled in", async () => {
@@ -153,6 +155,52 @@ describe("ForumPage", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+
+  it("picks up a just-created post's AI classification once it arrives, without a manual refresh", async () => {
+    const user = userEvent.setup();
+    const createdId = "22222222-2222-2222-2222-222222222222";
+    let classified = false;
+    const fetchMock = baseFetchMock();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.startsWith("/api/forum/posts?") && method === "GET") {
+        return Promise.resolve(jsonResponse({ items: [post], offset: 0, limit: 20, has_more: false }));
+      }
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url === "/api/forum/posts" && method === "POST") {
+        return Promise.resolve(jsonResponse(
+          { ...post, id: createdId, title: "Flooded underpass", body: "Deep water.", media: [], upvote_count: 0, comment_count: 0 },
+          201,
+        ));
+      }
+      if (url === `/api/forum/posts/${createdId}` && method === "GET") {
+        return Promise.resolve(jsonResponse({
+          ...post,
+          id: createdId,
+          title: "Flooded underpass",
+          body: "Deep water.",
+          media: [],
+          llm_hazard_type_suggested: classified ? "flooding" : null,
+          llm_severity: classified ? "high" : null,
+        }));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+    await screen.findByText("Deep pothole on Route 4");
+
+    await user.type(screen.getByLabelText("Title"), "Flooded underpass");
+    await user.type(screen.getByLabelText("Description"), "Deep water.");
+    await user.click(screen.getByRole("button", { name: "Report hazard" }));
+    await screen.findByText("Flooded underpass");
+    expect(screen.queryByText(/AI: High severity/)).toBeNull();
+
+    classified = true;
+    // Real time: the component's follow-up poll runs on a fixed 1.5s interval, not injectable.
+    expect(await screen.findByText("🤖 AI: High severity", {}, { timeout: 5000 })).toBeTruthy();
+  }, 10000);
 
   it("uploads a selected photo to the newly created report", async () => {
     const user = userEvent.setup();
@@ -267,6 +315,63 @@ describe("ForumPage", () => {
           is_anonymous: false,
           longitude: 34.78,
           latitude: 32.07,
+        }),
+      }),
+    ));
+  });
+
+  it("finds coordinates via an address search instead of requiring manual numbers", async () => {
+    const user = userEvent.setup();
+    const fetchMock = baseFetchMock();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.startsWith("/api/forum/posts?") && method === "GET") {
+        return Promise.resolve(jsonResponse({ items: [post], offset: 0, limit: 20, has_more: false }));
+      }
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url.startsWith("/api/geocoding/search")) {
+        return Promise.resolve(jsonResponse({
+          results: [{ label: "Herzliya Junction, Israel", longitude: 34.8437, latitude: 32.1624 }],
+          attribution: "© OpenStreetMap contributors",
+        }));
+      }
+      if (url === "/api/forum/posts" && method === "POST") {
+        return Promise.resolve(jsonResponse(
+          { ...post, id: "22222222-2222-2222-2222-222222222222", title: "Flooded underpass", body: "Deep water.", media: [], longitude: 34.8437, latitude: 32.1624 },
+          201,
+        ));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+    await screen.findByText("Deep pothole on Route 4");
+
+    await user.type(screen.getByLabelText("Title"), "Flooded underpass");
+    await user.type(screen.getByLabelText("Description"), "Deep water.");
+    await user.type(screen.getByLabelText("Address (optional)"), "Herzliya Junction");
+    await user.click(screen.getByRole("button", { name: "Search address" }));
+    await user.click(await screen.findByRole("button", { name: "Herzliya Junction, Israel" }));
+
+    expect((screen.getByLabelText("Longitude (optional)") as HTMLInputElement).value).toBe("34.8437");
+    expect((screen.getByLabelText("Latitude (optional)") as HTMLInputElement).value).toBe("32.1624");
+    expect(screen.getByText("Selected: Herzliya Junction, Israel")).toBeTruthy();
+    expect(screen.queryByText("No addresses found.")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Report hazard" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/forum/posts",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          title: "Flooded underpass",
+          body: "Deep water.",
+          hazard_type: "pothole",
+          is_anonymous: false,
+          longitude: 34.8437,
+          latitude: 32.1624,
         }),
       }),
     ));
@@ -410,7 +515,7 @@ describe("ForumPage", () => {
     await user.click(await screen.findByRole("button", { name: "Deep pothole on Route 4" }));
 
     expect(await screen.findByText("Wide and deep, watch out.")).toBeTruthy();
-    expect(screen.getByText("Medium severity")).toBeTruthy();
-    expect(screen.getByText(`Possible duplicate of report ${originalId}`)).toBeTruthy();
+    expect(screen.getByText("🤖 AI: Medium severity")).toBeTruthy();
+    expect(screen.getByText(`🤖 AI: possible duplicate of report ${originalId}`)).toBeTruthy();
   });
 });

@@ -147,10 +147,17 @@ async def explain_route(cost_breakdown: dict[str, Any], user_context: dict[str, 
         return "Deterministic test explanation."
     _require_real_call_configured()
     prompt = (
-        "Explain in one short paragraph, in plain language, why this driving route was chosen "
-        'over its alternatives. Respond with strict JSON matching {"explanation": string}.\n'
+        "You are explaining a road-safety routing decision to the driver who requested it. "
+        '"cost_breakdown.chosen" is the picked route; "cost_breakdown.alternatives" (if any) are '
+        "the other candidates it beat. Write one short paragraph (2-4 sentences), in plain "
+        "language, that: (1) names the concrete numbers that favored the chosen route over each "
+        "alternative — historical accident density, travel time, or both; (2) explains how the "
+        "driver's own profile (driving experience, vehicle type) and the time of day shaped the "
+        "safety-vs-time weighting (safety_weight/time_weight) behind that choice. If "
+        '"alternatives" is empty, explain why the chosen route is safe on its own numbers '
+        'instead of comparing. Respond with strict JSON matching {"explanation": string}.\n'
         f"Cost breakdown: {json.dumps(cost_breakdown, default=str)}\n"
-        f"Driver context: {json.dumps(user_context, default=str)}\n"
+        f"Driver and scoring context: {json.dumps(user_context, default=str)}\n"
     )
     raw = await _call_gemini(prompt)
     explanation = raw.get("explanation") if isinstance(raw, dict) else None

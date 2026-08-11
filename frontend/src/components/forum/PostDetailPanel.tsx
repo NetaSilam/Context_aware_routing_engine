@@ -56,13 +56,22 @@ export default function PostDetailPanel(props: PostDetailPanelProps): JSX.Elemen
       <h2>{post.title}</h2>
       <p className="forum-feed__meta">
         {HAZARD_TYPE_LABELS[post.hazard_type]} · {authorLabel(post.is_anonymous, post.is_own, post.author_email)}
+        {" "}· {new Date(post.created_at).toLocaleString()}
       </p>
       {post.llm_severity ? (
-        <p className="forum-feed__severity">{SEVERITY_LABELS[post.llm_severity]}</p>
+        <p
+          className="forum-feed__severity"
+          title="AI-estimated urgency, based on the report's own text — not verified by a person."
+        >
+          🤖 AI: {SEVERITY_LABELS[post.llm_severity]}
+        </p>
       ) : null}
       {post.duplicate_of_post_id ? (
-        <p className="forum-feed__duplicate">
-          Possible duplicate of report {post.duplicate_of_post_id}
+        <p
+          className="forum-feed__duplicate"
+          title="AI-detected: this report's text looks similar to a nearby report of the same hazard type."
+        >
+          🤖 AI: possible duplicate of report {post.duplicate_of_post_id}
         </p>
       ) : null}
       <p>{post.body}</p>
@@ -120,6 +129,7 @@ export default function PostDetailPanel(props: PostDetailPanelProps): JSX.Elemen
           <li key={comment.id} className="forum-feed__item">
             <p className="forum-feed__meta">
               {authorLabel(comment.is_anonymous, comment.is_own, comment.author_email)}
+              {" "}· {new Date(comment.created_at).toLocaleString()}
             </p>
             <p>{comment.body}</p>
             <MediaGallery items={comment.media} />

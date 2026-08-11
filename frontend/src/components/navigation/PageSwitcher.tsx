@@ -9,7 +9,6 @@ const PAGES: Array<{ id: AppPageId; label: string }> = [
   { id: "plan-route", label: "Plan a Route" },
   { id: "forum", label: "Hazard Reports" },
   { id: "inbox", label: "Inbox" },
-  { id: "canonical-network", label: "Canonical Network" },
   { id: "accident-attribution", label: "Accident Attribution" },
 ];
 

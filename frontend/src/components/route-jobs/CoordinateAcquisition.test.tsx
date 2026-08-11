@@ -127,4 +127,43 @@ describe("CoordinateAcquisition", () => {
     expect(await screen.findByText("No addresses found.")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledOnce();
   });
+
+  it("searches on Enter without requiring a click on the search button", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      results: [{ label: "Tel Aviv Center", longitude: 34.81, latitude: 32.09 }],
+      attribution: "© OpenStreetMap contributors",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CoordinateAcquisition disabled={false} onSubmit={vi.fn().mockResolvedValue(undefined)} />);
+
+    await user.type(screen.getAllByLabelText("Address")[0], "Tel Aviv{Enter}");
+
+    expect(await screen.findByRole("button", { name: "Tel Aviv Center" })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("does not show a stale 'no addresses found' message after an address has been selected", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      results: [{ label: "Tel Aviv Center", longitude: 34.81, latitude: 32.09 }],
+      attribution: "© OpenStreetMap contributors",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CoordinateAcquisition disabled={false} onSubmit={vi.fn().mockResolvedValue(undefined)} />);
+
+    await user.type(screen.getAllByLabelText("Address")[0], "Tel Aviv");
+    await user.click(screen.getByRole("button", { name: "Search origin" }));
+    await user.click(await screen.findByRole("button", { name: "Tel Aviv Center" }));
+
+    expect((screen.getByLabelText("Origin label") as HTMLInputElement).value).toBe("Tel Aviv Center");
+    expect(screen.queryByText("No addresses found.")).toBeNull();
+  });
+
+  it("hides the coordinate-picker map when hideMap is set", () => {
+    render(<CoordinateAcquisition disabled={false} onSubmit={vi.fn().mockResolvedValue(undefined)} hideMap />);
+
+    expect(screen.queryByLabelText("Coordinate selection map")).toBeNull();
+    expect(screen.queryByLabelText("Map click target")).toBeNull();
+  });
 });

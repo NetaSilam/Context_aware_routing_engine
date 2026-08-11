@@ -162,8 +162,39 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
    same `hazard_type`* created in the last `llm_dedup_lookback_days` (default 14) within
    `llm_dedup_radius_meters` (default 150m) of the new report's coordinates — reusing the same
    PostGIS distance-query pattern already used elsewhere (`data_routes.py`'s bbox queries), not a
-   new spatial primitive. If the new report has no coordinates, dedup is skipped entirely (nothing
-   to compare against) rather than falling back to a citywide or title-text-only match.
+   new spatial primitive.
+
+   **Amended (2026-08-11), real usage found a real gap:** the original decision was "if the new
+   report has no coordinates, dedup is skipped entirely." Coordinates are optional on every post
+   (`PostForm.tsx`'s lon/lat fields), so this silently left an entire class of report unchecked —
+   including two genuinely-duplicate reports from the same user ("pothole in Haifa", posted twice,
+   six days apart, both with no location). Rather than falling back to a citywide or
+   title-text-only match (too noisy — a stranger's unrelated report of the same hazard type
+   shouldn't get flagged just because neither has a location), a coordinate-less post now falls
+   back to comparing against *the same author's* other recent active posts of the same
+   `hazard_type` (`app/llm/tasks.py`'s `_find_dedup_candidates_by_author`) — a user re-posting the
+   same hazard is a clean, low-risk signal; a stranger's is not.
+
+   **A second, unrelated bug surfaced while fixing the first:** `enqueue_dedup_check_if_applicable`
+   (the function this decision's logic lives in) was made reusable from
+   `seed_forum_demo_data.py`'s startup backfill (next paragraph), whose connection is opened with
+   `row_factory=dict_row` for its own seeding code. `app/llm/tasks.py`'s query functions all
+   unpack fetched rows positionally (`body, hazard_type, longitude, latitude = row`), which
+   silently assumes a tuple-row connection — under `dict_row`, that same line unpacks the row's
+   *keys* instead (`longitude = "longitude"`, a non-None string), which passed every `is not None`
+   check and only surfaced as a genuine Postgres error once fed into a real `double precision`
+   query parameter. Every dedup-search query in `app/llm/tasks.py` now opens an explicit
+   `connection.cursor(row_factory=tuple_row)` rather than trusting the caller's connection
+   configuration — caught by running the fix against real pre-existing forum posts, not by the
+   test suite (every existing dedup test's connection happens to already default to tuple rows).
+
+   **Backfill:** `seed_forum_demo_data.py` (runs at every container start, not just the first) now
+   also enqueues triage and dedup checks for any active post that was never classified/checked —
+   scoped to *all* posts, not just this run's seed data, so it also catches real posts created
+   before the LLM feature existed. Both backfills are idempotent via a `NOT EXISTS` guard against
+   `app.llm_jobs`, so re-running never piles up duplicate jobs for a post whose check is already
+   in flight. `compose.yaml`'s `initialize` service gained a `redis: condition: service_healthy`
+   dependency it never previously needed, now that it enqueues real Celery jobs.
 6. **Fail-open, not fail-closed.** Unlike rate limiting (`ROUTING_FEATURE_PRD.md`/
    `FORUM_FEATURE_PRD.md`'s fail-closed `503` behavior for a Redis outage), an LLM provider error
    or timeout marks the job `failed` and leaves the post exactly as created — visible, unclassified,
@@ -231,6 +262,24 @@ and the `settings.testing`-gated pattern already used for the routing test-scori
     remaining way to make one job's processing time exceed another's while `TESTING=true` (the
     mock calls are all instant by design). See ticket 7's status for how the scheduling test was
     reworked to prove queue isolation structurally instead.
+
+    **Amended (2026-08-11), post-launch user feedback:** the explanation read as generic —
+    plausible-sounding but not actually grounded in a comparison, because `cost_breakdown`
+    originally carried only the *chosen* candidate's numbers. `explain_route`'s prompt asked it
+    to explain the pick "over its alternatives" while never actually supplying what those
+    alternatives were. `_enqueue_route_explanation_if_possible` now builds
+    `cost_breakdown = {"chosen": {...}, "alternatives": [{...}, ...]}` (every other candidate's
+    `distance_m`/`duration_seconds`/`historical_accident_density_per_km`/`final_cost`, via a new
+    `_candidate_summary` helper), and `user_context` gained `safety_weight`/`time_weight` from
+    the scoring result alongside the existing driver/time-of-day fields. The prompt itself was
+    rewritten to require citing concrete numbers against each alternative and connecting the
+    weighting back to the driver's own profile. Verified against a real Gemini call (not just the
+    deterministic test mock): the explanation now reads like *"...faster, taking 56.4 minutes
+    compared to 58.7 minutes for the alternative, which outweighed its slightly higher accident
+    density of 4.00 per km versus 3.57 per km...balanced your preferences with a 0.6 time weight
+    and a 0.4 safety weight..."* instead of a generic sentence. The frontend heading was also
+    changed to "AI-generated explanation: why Route N is recommended" so it's unambiguous that
+    an LLM produced the text (it previously just said "Why Route N is recommended").
 12. **Route explanation reuses the fast queue.** A single explanation call has the same rough cost
     shape as a single triage call (one document in, one short document out) — `estimate_duration_ms`
     classifies it the same way triage is classified, so it does not need a third queue.

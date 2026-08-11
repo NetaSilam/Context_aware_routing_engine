@@ -208,9 +208,17 @@ instead of silently piling up.
       and stops at the first confirmed duplicate, setting `duplicate_of_post_id` — already surfaced
       in the API response since ticket 4 added the field to `PostSummary`/`PostDetail`; the post is
       never deleted or hidden.
-- [x] A post with no coordinates skips dedup entirely — verified, not assumed:
-      `test_a_post_with_no_coordinates_never_gets_a_dedup_check_job` asserts no `dedup_check` row
-      is ever created for such a post (not just "not yet").
+- [x] ~~A post with no coordinates skips dedup entirely~~ **Superseded 2026-08-11** — real usage
+      (two genuine duplicate reports from the same user, both posted without a location) showed
+      this was a real gap, not a safe default. A coordinate-less post now falls back to comparing
+      against the same author's own recent posts of the same hazard type instead of skipping
+      dedup outright — see `docs/LLM_FEATURE_PRD.md` decision 5's amendment for the full story,
+      including an unrelated row-factory bug (`app/llm/tasks.py` unpacking a `dict_row`
+      connection's rows positionally) that surfaced while building the fix, and the
+      `seed_forum_demo_data.py` startup backfill added for posts (seeded or real) that predate
+      either fix. `test_llm_dedup_stack.py`'s no-coordinates test was replaced with
+      `test_a_post_with_no_coordinates_is_flagged_against_the_same_authors_recent_post` and
+      `test_a_post_with_no_coordinates_is_not_compared_against_a_different_authors_posts`.
 - [x] Integration tests (`test_llm_dedup_stack.py`, verified against a real disposable stack — a
       dedicated `llm-dedup-api`/`llm-dedup-worker-fast` pair with `LLM_DEDUP_CANDIDATE_LIMIT`
       overridden to `2`, since that setting is baked into a process's `Settings` at startup and
@@ -249,15 +257,14 @@ matching how the rest of the forum UI already renders conditionally on nullable 
       both the feed list and the detail panel, plus an explicit assertion that neither renders
       for the (default, all-`null`) base fixture.
 
-**Scope note:** the ticket's "What to build" prose mentions the classification "can arrive after
-the post already rendered," but the concrete checklist above does not ask for live polling/push
-updates, and the existing app has no push channel for forum posts (unlike route jobs, which do
-poll). Implementing that was treated as out of scope here — it would need a new polling or SSE
-mechanism applied to the whole feed, which is a real design decision, not a natural extension of
-this ticket's 3 checklist items. In practice, a freshly-arrived classification becomes visible on
-the next natural feed fetch (closing a report detail already calls `loadFeed`, as does changing
-the hazard-type filter or loading more), just not while a user is staring at an unchanged feed
-screen. If live-refresh is wanted, it should be scoped as its own ticket.
+**Scope note (superseded 2026-08-11):** this ticket originally treated live polling as out of
+scope — the classification would only appear on the feed's next natural fetch, not while a user
+sat on an unchanged screen right after posting. Real user testing hit that gap immediately (a
+just-published report showed no tag at all until a manual navigation), so `ForumPage.tsx` gained
+a bounded per-post follow-up poll for the one post the current user just created (not a
+whole-feed live channel) — see `docs/CODEBASE_MAP.md`'s forum entry for the mechanism. This
+mirrors `PlanRoutePage.tsx`'s existing route-explanation follow-up poll rather than introducing a
+new pattern.
 
 **Verified:** `npx tsc --noEmit`, `npx vitest run` (66/66, all suites) locally, then rebuilt and
 ran the `frontend-tests` service against a real disposable Compose stack (`docker compose ...
@@ -332,6 +339,25 @@ explanation attached to every completed route job.
    worker is then started as a sanity check that the slow job isn't broken, just deprioritized.
    Also gave the test's jobs a real seeded `subject_post_id` (real dispatch now requires one for
    `triage`/`dedup_check`).
+3. **The default `gemini_model` (`"gemini-2.0-flash"`) was dead on arrival against a real Gemini
+   key.** Every mock-path test (the entire automated suite, by design — decision 7) passed
+   throughout tickets 1-9 without ever noticing, because `settings.testing` skips the real HTTP
+   call entirely. The gap only surfaced once a real `GEMINI_API_KEY` was set against the live
+   `.env.real` stack: every `route_explanation` job failed with the client's generic
+   `"The LLM provider is temporarily unavailable."` (the real cause is swallowed by
+   `_call_gemini`'s broad `except (httpx.HTTPError, ...)`, by design, so it doesn't leak upstream
+   error text into a user-facing job). Reproduced directly with `httpx.post(...)` against the
+   real endpoint from inside the `llm-worker-fast` container: Gemini returned
+   `404 NOT_FOUND — "This model models/gemini-2.0-flash is no longer available to new users."`
+   `gemini-2.5-flash`/`gemini-2.5-flash-lite` are *also* dead for new keys the same way — Google
+   had moved a full model generation ahead of what this ticket originally assumed. Listed the
+   key's actually-available models via `GET /v1beta/models` and confirmed a working one
+   (`gemini-3.5-flash-lite`, `200 OK` on a real `generateContent` call) before changing the
+   default in `app/config.py`. **Lesson for whoever revisits this default next:** the
+   mock-path-only test suite can never catch a provider-side model deprecation — that class of
+   bug is only observable by actually calling the real API, which this project deliberately
+   avoids in CI (decision 7). Re-verify the configured `gemini_model` string against a real key
+   periodically, don't assume it stays valid.
 
 **Verified:** ran `tests/test_llm_route_explanation_stack.py` against the real disposable stack,
 then re-ran the full existing regression set (`route-job-tests`, `route-history-tests`,

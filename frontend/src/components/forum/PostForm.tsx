@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 
 import type { CreatePostRequest } from "../../api/forum";
+import { searchAddresses, type AddressSearchResult } from "../../api/geocoding";
 import { HAZARD_TYPE_LABELS, HAZARD_TYPES } from "../../types/forum";
 import type { HazardType } from "../../types/forum";
 
@@ -21,12 +22,45 @@ export default function PostForm(props: PostFormProps): JSX.Element {
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [addressQuery, setAddressQuery] = useState("");
+  const [addressResults, setAddressResults] = useState<AddressSearchResult[]>([]);
+  const [addressSearchCompleted, setAddressSearchCompleted] = useState(false);
+  const [addressSearching, setAddressSearching] = useState(false);
+  const [addressError, setAddressError] = useState<string | null>(null);
+  const [selectedAddressLabel, setSelectedAddressLabel] = useState("");
+
   function useCurrentLocation() {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition((position) => {
       setLongitude(String(position.coords.longitude));
       setLatitude(String(position.coords.latitude));
+      setSelectedAddressLabel("");
     });
+  }
+
+  async function runAddressSearch() {
+    setAddressSearching(true);
+    setAddressError(null);
+    try {
+      const response = await searchAddresses(addressQuery);
+      setAddressResults(response.results);
+      setAddressSearchCompleted(true);
+    } catch (err) {
+      setAddressError(
+        err instanceof Error ? err.message : "Address search failed. Enter coordinates manually instead.",
+      );
+    } finally {
+      setAddressSearching(false);
+    }
+  }
+
+  function selectAddress(match: AddressSearchResult) {
+    setLongitude(String(match.longitude));
+    setLatitude(String(match.latitude));
+    setSelectedAddressLabel(match.label);
+    setAddressResults([]);
+    setAddressSearchCompleted(false);
+    setAddressError(null);
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -51,6 +85,10 @@ export default function PostForm(props: PostFormProps): JSX.Element {
       setLongitude("");
       setLatitude("");
       setFiles([]);
+      setAddressQuery("");
+      setAddressResults([]);
+      setAddressSearchCompleted(false);
+      setSelectedAddressLabel("");
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the report.");
@@ -91,6 +129,43 @@ export default function PostForm(props: PostFormProps): JSX.Element {
           onChange={(event) => setBody(event.target.value)}
         />
       </label>
+      <section aria-label="Location address search">
+        <label>
+          Address (optional)
+          <input
+            value={addressQuery}
+            maxLength={200}
+            onChange={(event) => setAddressQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              void runAddressSearch();
+            }}
+          />
+        </label>
+        <button
+          type="button"
+          className="ghost-button"
+          disabled={addressSearching}
+          onClick={() => void runAddressSearch()}
+        >
+          {addressSearching ? "Searching…" : "Search address"}
+        </button>
+        {addressSearchCompleted && addressResults.length === 0 ? <p>No addresses found.</p> : null}
+        <ul className="address-results">
+          {addressResults.map((match) => (
+            <li key={`${match.longitude}-${match.latitude}-${match.label}`}>
+              <button type="button" className="ghost-button" onClick={() => selectAddress(match)}>
+                {match.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {addressError ? <p role="alert" className="error-banner">{addressError}</p> : null}
+        {selectedAddressLabel ? (
+          <p className="geocoding-attribution">Selected: {selectedAddressLabel}</p>
+        ) : null}
+      </section>
       <div className="forum-post-form__location">
         <label>
           Longitude (optional)
@@ -100,7 +175,7 @@ export default function PostForm(props: PostFormProps): JSX.Element {
             min={-180}
             max={180}
             value={longitude}
-            onChange={(event) => setLongitude(event.target.value)}
+            onChange={(event) => { setLongitude(event.target.value); setSelectedAddressLabel(""); }}
           />
         </label>
         <label>
@@ -111,7 +186,7 @@ export default function PostForm(props: PostFormProps): JSX.Element {
             min={-90}
             max={90}
             value={latitude}
-            onChange={(event) => setLatitude(event.target.value)}
+            onChange={(event) => { setLatitude(event.target.value); setSelectedAddressLabel(""); }}
           />
         </label>
         <button type="button" className="ghost-button" onClick={useCurrentLocation}>

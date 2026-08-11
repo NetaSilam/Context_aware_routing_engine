@@ -72,13 +72,21 @@ export default function InboxPage(props: InboxPageProps): JSX.Element {
 
   return (
     <main className="page-shell">
-      <section className="hero-panel">
-        <p className="eyebrow">Direct messages</p>
-        <h1>Inbox</h1>
-        <p className="hero-panel__copy">
-          Coordinate with other drivers directly — ask a reporter for more detail, or arrange to
-          share a route around a closure.
-        </p>
+      <section className="hero-panel hero-panel--illustrated">
+        <div className="hero-panel__content">
+          <p className="eyebrow">Direct messages</p>
+          <h1>Coordinate with other drivers, one on one</h1>
+          <p className="hero-panel__copy">
+            Ask a reporter for more detail, arrange to share a route around a closure, or just
+            say thanks for a heads-up — privately and directly.
+          </p>
+          <ul className="hero-panel__features">
+            <li>🔒 Private &amp; secure</li>
+            <li>📎 Photos &amp; videos</li>
+            <li>🔔 Live delivery</li>
+          </ul>
+        </div>
+        <div className="hero-panel__art" role="img" aria-label="A road leading toward a city skyline, marked with a safety pin" />
       </section>
 
       {error ? <p className="error-banner">{error}</p> : null}
