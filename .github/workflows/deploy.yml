@@ -1,0 +1,85 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VM_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Write production .env.real
+        run: |
+          cat > env.real <<EOF
+          COMPOSE_PROJECT_NAME=road-risk-real
+          POSTGRES_DB=road_risk
+          POSTGRES_USER=road_risk
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          DATABASE_URL=postgresql+psycopg://road_risk:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/road_risk
+          REDIS_URL=redis://redis:6379/0
+          FOUNDATION_DATA_VERSION=national-foundation-2026-08-01
+          FOUNDATION_DATA_MODE=real
+          FOUNDATION_DATA_PATH=/data
+          FOUNDATION_DATA_CHECKSUM=c3d6e0eeec723a139917f19a53cca2ee2ab7701aa1e75578870d52b10eb9a45c
+          RISK_DATA_VERSION=national-risk-2026-08-01
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          AUTH_ALLOWED_ORIGIN=http://${{ secrets.VM_HOST }}
+          AUTH_COOKIE_SECURE=false
+          OSRM_BASE_URL=http://osrm:5000/
+          EXPECTED_OSRM_GRAPH_VERSION=israel-palestine-2026-07-31-osrm-6.0.0-profile-v1
+          OSRM_DEPLOYMENT_MANIFEST_PATH=/osrm/deployment-compatibility.json
+          OSRM_COMPATIBILITY_REQUIRED=true
+          GEOCODER_BASE_URL=https://nominatim.openstreetmap.org/search
+          GEOCODER_USER_AGENT=sa-bracha-course-project/1.0 (azure-vm; contact netasilam2001@gmail.com)
+          FRONTEND_PORT=80
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          EOF
+
+      - name: Upload .env.real to the VM
+        run: |
+          scp -i ~/.ssh/deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
+            env.real "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}:~/Context_aware_routing_engine/.env.real"
+
+      - name: Pull latest code and restart the stack
+        run: |
+          ssh -i ~/.ssh/deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "${{ secrets.VM_USER }}@${{ secrets.VM_HOST }}" '
+              set -e
+              cd ~/Context_aware_routing_engine
+              git fetch origin
+              git checkout "${{ github.ref_name }}"
+              git reset --hard "origin/${{ github.ref_name }}"
+              chmod 600 .env.real
+              docker compose --env-file .env.real up -d --build
+            '
+
+      - name: Verify the site is healthy
+        run: |
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.VM_HOST }}/")
+            if [ "$code" = "200" ]; then
+              echo "Frontend is up (HTTP $code)"
+              api_code=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.VM_HOST }}/api/auth/me")
+              if [ "$api_code" = "401" ]; then
+                echo "API proxy is responding correctly (HTTP $api_code)"
+                exit 0
+              fi
+              echo "Frontend is up but API proxy returned unexpected HTTP $api_code"
+              exit 1
+            fi
+            echo "Attempt $i: frontend returned HTTP $code, retrying in 10s..."
+            sleep 10
+          done
+          echo "Site did not become healthy in time"
+          exit 1
