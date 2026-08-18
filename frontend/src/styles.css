@@ -921,6 +921,25 @@ input[readonly] {
   gap: 8px !important;
 }
 
+.route-preferences-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.route-preferences-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.route-preferences-form__checkbox {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
 .forum-post-form__location {
   display: flex;
   flex-wrap: wrap;

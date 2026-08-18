@@ -220,7 +220,7 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
           </div>
         </div>
         {editing ? (
-          <form onSubmit={savePreferences} aria-label="Route preferences">
+          <form className="route-preferences-form" onSubmit={savePreferences} aria-label="Route preferences">
             {error ? <p className="error-banner">{error}</p> : null}
             <label>
               Driving experience
@@ -237,8 +237,8 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
                 <option value="truck">Truck</option>
               </select>
             </label>
-            <label><input type="checkbox" checked={avoidHighways} onChange={(event) => setAvoidHighways(event.target.checked)} /> Avoid highways</label>
-            <label><input type="checkbox" checked={avoidTolls} onChange={(event) => setAvoidTolls(event.target.checked)} /> Avoid tolls</label>
+            <label className="route-preferences-form__checkbox"><input type="checkbox" checked={avoidHighways} onChange={(event) => setAvoidHighways(event.target.checked)} /> Avoid highways</label>
+            <label className="route-preferences-form__checkbox"><input type="checkbox" checked={avoidTolls} onChange={(event) => setAvoidTolls(event.target.checked)} /> Avoid tolls</label>
             <label>
               How much do you weigh safety vs. time?
               <select value={safetyPreference} onChange={(event) => setSafetyPreference(event.target.value as SafetyPreference)}>
