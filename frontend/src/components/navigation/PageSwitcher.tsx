@@ -1,4 +1,10 @@
-export type AppPageId = "plan-route" | "forum" | "inbox" | "canonical-network" | "accident-attribution";
+export type AppPageId =
+  | "plan-route"
+  | "forum"
+  | "inbox"
+  | "canonical-network"
+  | "accident-attribution"
+  | "navigate";
 
 interface PageSwitcherProps {
   activePage: AppPageId;

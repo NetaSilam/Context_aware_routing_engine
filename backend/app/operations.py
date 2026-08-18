@@ -6,6 +6,11 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+import redis
+from redis.exceptions import RedisError
+
+from app.config import get_settings
+
 _SENSITIVE_FIELDS = {
     "address",
     "coordinates",
@@ -77,20 +82,44 @@ def log_route_event(
     )
 
 
+_UPSTREAM_FAILURES_KEY = "ops:upstream_failures"
+
+_sync_redis_client: redis.Redis | None = None
+
+
+def _get_sync_redis() -> redis.Redis:
+    # A plain sync client (not app.redis_client's async one) so this counter can be
+    # incremented uniformly from async request handlers, from sync code run via
+    # asyncio.to_thread, and from fully sync Celery workers alike.
+    global _sync_redis_client
+    if _sync_redis_client is None:
+        _sync_redis_client = redis.Redis.from_url(
+            str(get_settings().redis_url), decode_responses=True
+        )
+    return _sync_redis_client
+
+
 class BoundedOperationsMetrics:
-    """In-process counters with no user, route, or job-id label cardinality."""
+    """Failure counter shared via Redis across every API/worker process, so scaling to
+    multiple replicas doesn't leave each one reporting only its own partial count."""
 
     def __init__(self) -> None:
         self.started_at = time.monotonic()
-        self.upstream_failures = 0
 
     def record_upstream_failure(self) -> None:
-        self.upstream_failures += 1
+        try:
+            _get_sync_redis().incr(_UPSTREAM_FAILURES_KEY)
+        except RedisError:
+            pass  # Best-effort; a missed increment doesn't affect the request it came from.
 
     def snapshot(self, *, queue_depth: int, queue_capacity: int) -> dict[str, int | float]:
+        try:
+            upstream_failures = int(_get_sync_redis().get(_UPSTREAM_FAILURES_KEY) or 0)
+        except RedisError:
+            upstream_failures = -1  # Signals the count is unavailable, distinct from zero failures.
         return {
             "uptime_seconds": round(time.monotonic() - self.started_at, 3),
-            "upstream_failures": self.upstream_failures,
+            "upstream_failures": upstream_failures,
             "queue_depth": queue_depth,
             "queue_capacity": queue_capacity,
         }

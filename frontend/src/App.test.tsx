@@ -32,6 +32,9 @@ class StubEventSource {
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(profile)));
   vi.stubGlobal("EventSource", StubEventSource);
+  // Each test should start with no in-progress navigation session persisted by a
+  // previous test's App instance.
+  window.sessionStorage.clear();
 });
 
 afterEach(() => {

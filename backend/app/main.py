@@ -14,6 +14,7 @@ from app.health import router as health_router
 from app.geocoding.router import router as geocoding_router
 from app.messaging.routes import router as messages_router
 from app.notifications.routes import router as notifications_router
+from app.routing.live_routes import router as live_routing_router
 from app.routing.route_jobs import router as route_jobs_router
 from app.routing.route_jobs import history_router as route_history_router
 from app.routing.route_jobs import recover_stale_route_jobs
@@ -55,6 +56,7 @@ def create_app() -> FastAPI:
     app.include_router(geocoding_router)
     app.include_router(route_jobs_router)
     app.include_router(route_history_router)
+    app.include_router(live_routing_router)
     app.include_router(forum_router)
     app.include_router(messages_router)
     app.include_router(notifications_router)

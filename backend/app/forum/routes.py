@@ -365,6 +365,75 @@ async def list_posts(
     return {"items": items, "offset": offset, "limit": limit, "has_more": len(rows) > limit}
 
 
+@router.get("/posts/nearby", response_model=PostPage)
+async def list_posts_nearby(
+    request: Request,
+    user: dict[str, Any] = Depends(get_current_user),
+    min_lon: Annotated[float, Query(ge=-180, le=180)] = ...,
+    min_lat: Annotated[float, Query(ge=-90, le=90)] = ...,
+    max_lon: Annotated[float, Query(ge=-180, le=180)] = ...,
+    max_lat: Annotated[float, Query(ge=-90, le=90)] = ...,
+    limit: Annotated[int, Query(ge=1, le=50)] = 50,
+) -> dict[str, Any]:
+    """Hazard reports within a bounding box — used to alert a driver in live
+    navigation to nearby reports without recording their position server-side."""
+    reject_unexpected_query_parameters(
+        request, {"min_lon", "min_lat", "max_lon", "max_lat", "limit"}
+    )
+    if min_lon >= max_lon or min_lat >= max_lat:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="bbox bounds must be ordered (min < max)",
+        )
+    settings = get_settings()
+    if (
+        max_lon - min_lon > settings.forum_nearby_max_span_degrees
+        or max_lat - min_lat > settings.forum_nearby_max_span_degrees
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="bbox span exceeds the supported maximum",
+        )
+    viewer_id = int(user["id"])
+    try:
+        async with get_engine().begin() as connection:
+            rows = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT p.id, p.author_user_id, u.email AS author_email, p.is_anonymous,
+                               p.hazard_type, p.title, p.longitude, p.latitude,
+                               p.upvote_count, p.downvote_count, p.comment_count,
+                               p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
+                               p.created_at, p.updated_at, v.value AS my_vote_value
+                        FROM app.forum_posts p
+                        JOIN app.users u ON u.id = p.author_user_id
+                        LEFT JOIN app.forum_votes v
+                            ON v.target_type = 'post' AND v.target_id = p.id
+                               AND v.user_id = :viewer_id
+                        WHERE p.status = 'active'
+                          AND p.longitude BETWEEN :min_lon AND :max_lon
+                          AND p.latitude BETWEEN :min_lat AND :max_lat
+                        ORDER BY p.created_at DESC, p.id DESC
+                        LIMIT :fetch_limit
+                        """
+                    ),
+                    {
+                        "viewer_id": viewer_id,
+                        "min_lon": min_lon,
+                        "max_lon": max_lon,
+                        "min_lat": min_lat,
+                        "max_lat": max_lat,
+                        "fetch_limit": limit,
+                    },
+                )
+            ).mappings().all()
+    except SQLAlchemyError as exc:
+        raise _service_unavailable("The forum feed is temporarily unavailable.") from exc
+    items = [_serialize_post(row, viewer_id) for row in rows]
+    return {"items": items, "offset": 0, "limit": limit, "has_more": False}
+
+
 @router.get("/posts/{post_id}", response_model=PostDetail)
 async def get_post(
     post_id: UUID,

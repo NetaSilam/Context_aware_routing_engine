@@ -16,7 +16,10 @@ For day-to-day local startup, shutdown, reset, and test commands, see
 
 ## Development foundation
 
-The route page is currently an asynchronous-job UI shell. The supporting
+The route page is an asynchronous-job UI shell: submit an origin/destination, compare scored
+candidates, and optionally start live turn-by-turn navigation on the chosen route (voice and text
+guidance, automatic rerouting on deviation, nearby hazard-report alerts — see the "Live Navigation
+Extension" section of [`docs/ROUTING_FEATURE_PRD.md`](docs/ROUTING_FEATURE_PRD.md)). The supporting
 foundation is now reproducible: Alembic owns the application schema, a one-shot
 initializer verifies foundation-data identity, and Compose starts PostGIS,
 Redis, FastAPI, workers, and the compiled React application behind Nginx in

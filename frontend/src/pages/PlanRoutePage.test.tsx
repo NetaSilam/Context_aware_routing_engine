@@ -23,7 +23,7 @@ const profile = { id: 1, email: "driver@example.com", driving_experience: "exper
 
 describe("PlanRoutePage", () => {
   it("renders the authenticated profile and asynchronous route shell", () => {
-    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} />);
+    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} onStartNavigation={() => undefined} />);
 
     expect(screen.getByRole("main")).toBeTruthy();
     expect(screen.getByText(/driver@example.com/)).toBeTruthy();
@@ -40,7 +40,7 @@ describe("PlanRoutePage", () => {
         : updated), { status: 200, headers: { "Content-Type": "application/json" } }),
     ));
     vi.stubGlobal("fetch", fetchMock);
-    render(<PlanRoutePage user={profile} onProfileUpdated={onProfileUpdated} />);
+    render(<PlanRoutePage user={profile} onProfileUpdated={onProfileUpdated} onStartNavigation={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: "Edit route preferences" }));
     await user.selectOptions(screen.getByLabelText("Driving experience"), "novice");
@@ -72,7 +72,7 @@ describe("PlanRoutePage", () => {
         risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
         included_year_start: 2020, included_year_end: 2023,
         risk_metric_name: "historical_accident_density_per_km", risk_metric_description: "Historical accident density is a historical risk proxy.",
-        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] } }],
+        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] }, steps: [] }],
       },
     };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -82,7 +82,7 @@ describe("PlanRoutePage", () => {
       return Promise.resolve(new Response(JSON.stringify(completedJob), { status: 200, headers: { "Content-Type": "application/json" } }));
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} />);
+    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} onStartNavigation={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: "Compare routes" }));
 
@@ -112,7 +112,7 @@ describe("PlanRoutePage", () => {
         risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
         included_year_start: 2020, included_year_end: 2023,
         risk_metric_name: "historical_accident_density_per_km", risk_metric_description: "Historical accident density is a historical risk proxy.",
-        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] } }],
+        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] }, steps: [] }],
       },
     };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -122,7 +122,7 @@ describe("PlanRoutePage", () => {
       return Promise.resolve(new Response(JSON.stringify(completedJob), { status: 200, headers: { "Content-Type": "application/json" } }));
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} />);
+    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} onStartNavigation={() => undefined} />);
 
     await user.click(screen.getByRole("button", { name: "Compare routes" }));
 
@@ -147,7 +147,7 @@ describe("PlanRoutePage", () => {
         risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
         included_year_start: 2020, included_year_end: 2023,
         risk_metric_name: "historical_accident_density_per_km", risk_metric_description: "Historical accident density is a historical risk proxy.",
-        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] } }],
+        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] }, steps: [] }],
       },
     };
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -157,7 +157,7 @@ describe("PlanRoutePage", () => {
       return Promise.resolve(new Response(JSON.stringify(completedJob), { status: 200, headers: { "Content-Type": "application/json" } }));
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} />);
+    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} onStartNavigation={() => undefined} />);
 
     expect(screen.getByLabelText("Coordinate selection map")).toBeTruthy();
 
@@ -186,7 +186,7 @@ describe("PlanRoutePage", () => {
         risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
         included_year_start: 2020, included_year_end: 2023,
         risk_metric_name: "historical_accident_density_per_km", risk_metric_description: "Historical accident density is a historical risk proxy.",
-        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] } }],
+        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] }, steps: [] }],
       },
     };
     let explanationReady = false;
@@ -199,7 +199,7 @@ describe("PlanRoutePage", () => {
       }), { status: 200, headers: { "Content-Type": "application/json" } }));
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} />);
+    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} onStartNavigation={() => undefined} />);
 
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(screen.queryByText("Chosen for its lower historical risk.")).toBeNull();
@@ -208,6 +208,53 @@ describe("PlanRoutePage", () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
 
     expect(screen.getByText("Chosen for its lower historical risk.")).toBeTruthy();
+  });
+
+  it("hands off the candidate, destination, and scoring context when starting navigation", async () => {
+    const user = userEvent.setup();
+    const jobId = "6e2c1a5b-7e0b-4a2a-9f0e-7f0b6d6b3c11";
+    window.history.replaceState({}, "", `/?routeJob=${jobId}`);
+    const completedJob = {
+      id: jobId, status: "completed",
+      origin_longitude: 34.78, origin_latitude: 32.07,
+      destination_longitude: 34.90, destination_latitude: 32.20,
+      origin_label: null, destination_label: null, created_at: new Date().toISOString(),
+      started_at: new Date().toISOString(), completed_at: new Date().toISOString(),
+      error_code: null, error_message: null, failure: null,
+      result: {
+        schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
+        safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+        reference_risk_p95: 3.5, low_coverage_threshold: 0.8,
+        risk_data_version: "risk-v9", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
+        included_year_start: 2020, included_year_end: 2023,
+        risk_metric_name: "historical_accident_density_per_km", risk_metric_description: "Historical accident density is a historical risk proxy.",
+        candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.90, 32.20]] }, steps: [] }],
+      },
+    };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => Promise.resolve(
+      new Response(JSON.stringify(String(input).startsWith("/api/route-history?")
+        ? { items: [], offset: 0, limit: 10, has_more: false }
+        : completedJob), { status: 200, headers: { "Content-Type": "application/json" } }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    const onStartNavigation = vi.fn();
+    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} onStartNavigation={onStartNavigation} />);
+
+    await user.click(await screen.findByRole("button", { name: /Start navigation/ }));
+
+    expect(onStartNavigation).toHaveBeenCalledWith({
+      candidate: completedJob.result.candidates[0],
+      destinationLongitude: 34.90,
+      destinationLatitude: 32.20,
+      scoringContext: {
+        driving_experience: "experienced",
+        vehicle_type: "car",
+        avoid_tolls: false,
+        avoid_highways: false,
+        reference_risk_p95: 3.5,
+        risk_data_version: "risk-v9",
+      },
+    });
   });
 
   it("uses bounded polling delays and stops polling when unmounted", async () => {
@@ -227,7 +274,7 @@ describe("PlanRoutePage", () => {
         : runningJob), { status: 200, headers: { "Content-Type": "application/json" } }),
     ));
     vi.stubGlobal("fetch", fetchMock);
-    const view = render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} />);
+    const view = render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} onStartNavigation={() => undefined} />);
 
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     const routeJobCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/api/route-jobs/"));
@@ -253,7 +300,7 @@ describe("PlanRoutePage", () => {
       safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 }, reference_risk_p95: 2,
       low_coverage_threshold: 0.8, risk_data_version: "old-risk", formula_version: "old-formula", matcher_version: "old-matcher", graph_version: "old-graph",
       included_year_start: 2020, included_year_end: 2023, risk_metric_name: "historical_accident_density_per_km", risk_metric_description: "Historical risk proxy.",
-      candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] } }],
+      candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] }, steps: [] }],
     };
     const savedJob = { id: savedId, status: "completed", origin_longitude: 34.78, origin_latitude: 32.07, destination_longitude: 34.79, destination_latitude: 32.08, origin_label: "Saved origin", destination_label: "Saved destination", created_at: "2026-01-01T00:00:00Z", started_at: "2026-01-01T00:00:01Z", completed_at: "2026-01-01T00:00:02Z", error_code: null, error_message: null, failure: null, result };
     const summary = { id: savedId, origin_label: "Saved origin", destination_label: "Saved destination", origin_longitude: 34.78, origin_latitude: 32.07, destination_longitude: 34.79, destination_latitude: 32.08, completed_at: "2026-01-01T00:00:02Z", chosen_index: 0, route_count: 1, distance_m: 1000, duration_seconds: 120, historical_accident_density_per_km: 1, coverage: 1, final_cost: 0.2, risk_choice_available: false };
@@ -265,7 +312,7 @@ describe("PlanRoutePage", () => {
       return Promise.resolve(new Response(JSON.stringify({ ...savedJob, id: rerunId, status: "running", result: null }), { status: 200, headers: { "Content-Type": "application/json" } }));
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} />);
+    render(<PlanRoutePage user={profile} onProfileUpdated={() => undefined} onStartNavigation={() => undefined} />);
 
     await user.click(await screen.findByRole("button", { name: "Open saved result" }));
     expect(await screen.findByText(/old-formula \/ old-risk \/ old-matcher \/ old-graph/)).toBeTruthy();

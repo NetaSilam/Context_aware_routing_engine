@@ -180,6 +180,10 @@ def _calculate_result(job: tuple[Any, ...]) -> tuple[dict[str, Any], int, int]:
         index: candidate.duration
         for index, candidate in enumerate(osrm_result.candidates)
     }
+    steps_by_index = {
+        index: [step.model_dump() for step in candidate.steps]
+        for index, candidate in enumerate(osrm_result.candidates)
+    }
     candidates = [
         CandidateRouteMeasurement(
             candidate_index=match.candidate_index,
@@ -207,6 +211,7 @@ def _calculate_result(job: tuple[Any, ...]) -> tuple[dict[str, Any], int, int]:
         {
             **asdict(candidate),
             "geometry": geometry_by_index[candidate.candidate_index],
+            "steps": steps_by_index[candidate.candidate_index],
         }
         for candidate in scoring.candidates
     ]

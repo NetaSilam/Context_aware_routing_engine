@@ -1,5 +1,18 @@
 export type RouteJobState = "queued" | "running" | "completed" | "failed";
 
+export interface RouteManeuver {
+  type: string;
+  modifier: string | null;
+  location: [number, number] | null;
+}
+
+export interface RouteStep {
+  distance: number;
+  duration: number;
+  name: string;
+  maneuver: RouteManeuver;
+}
+
 export interface RouteCandidateResult {
   candidate_index: number;
   distance_m: number;
@@ -15,6 +28,7 @@ export interface RouteCandidateResult {
   safety_contribution: number;
   final_cost: number;
   geometry: { type: "LineString"; coordinates: [number, number][] };
+  steps: RouteStep[];
 }
 
 export interface RouteJobResult {
@@ -35,6 +49,26 @@ export interface RouteJobResult {
   included_year_end: number;
   risk_metric_name: string;
   risk_metric_description: string;
+}
+
+export interface RerouteScoringContext {
+  driving_experience: "novice" | "experienced";
+  vehicle_type: "car" | "motorcycle" | "truck";
+  avoid_tolls: boolean;
+  avoid_highways: boolean;
+  reference_risk_p95: number;
+  risk_data_version: string;
+}
+
+export interface RerouteResult {
+  schema_version: string;
+  chosen_index: number;
+  risk_choice_available: boolean;
+  candidates: RouteCandidateResult[];
+  safety_weight: number;
+  time_weight: number;
+  formula_version: string;
+  risk_data_version: string;
 }
 
 export interface RouteJob {
