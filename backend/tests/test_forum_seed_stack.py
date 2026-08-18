@@ -36,6 +36,7 @@ def test_seeding_is_idempotent_and_populates_realistic_content() -> None:
     assert first_report["users"] >= 6
     assert first_report["posts"] >= 8
     assert first_report["comments"] >= 8
+    assert first_report["media"] >= 5
     assert first_report["votes"] >= 8
 
     second = run_seed()
@@ -78,6 +79,16 @@ def test_seeding_is_idempotent_and_populates_realistic_content() -> None:
             """
         ).fetchone()[0]
         assert voted_posts > 0
+
+        posts_with_media = connection.execute(
+            """
+            SELECT COUNT(DISTINCT p.id) FROM app.forum_posts p
+            JOIN app.users u ON u.id = p.author_user_id
+            JOIN app.forum_post_media m ON m.post_id = p.id
+            WHERE u.is_seed_account = TRUE
+            """
+        ).fetchone()[0]
+        assert posts_with_media == first_report["media"]
 
 
 def test_seed_accounts_use_a_stable_recognizable_email_pattern_and_valid_password_hash() -> None:

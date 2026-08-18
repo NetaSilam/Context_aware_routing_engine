@@ -8,7 +8,6 @@ import NotificationIndicator from "./components/notifications/NotificationIndica
 import AccidentAttributionPage from "./pages/AccidentAttributionPage";
 import CanonicalNetworkPage from "./pages/CanonicalNetworkPage";
 import ForumPage from "./pages/ForumPage";
-import InboxPage from "./pages/InboxPage";
 import NavigatePage from "./pages/NavigatePage";
 import PlanRoutePage from "./pages/PlanRoutePage";
 import type { UserProfile } from "./types/auth";
@@ -77,7 +76,6 @@ export default function App(props: AppProps): JSX.Element {
       <PlanRoutePage user={user} onProfileUpdated={setUser} onStartNavigation={startNavigation} />
     ),
     forum: props.pages?.forum ?? <ForumPage />,
-    inbox: props.pages?.inbox ?? <InboxPage user={user} />,
     "canonical-network": props.pages?.["canonical-network"] ?? <CanonicalNetworkPage />,
     "accident-attribution": props.pages?.["accident-attribution"] ?? <AccidentAttributionPage />,
     navigate: props.pages?.navigate ?? (

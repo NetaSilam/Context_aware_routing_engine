@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -17,6 +17,7 @@ import CoordinateAcquisition from "./CoordinateAcquisition";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   mapState.click = null;
   cleanup();
 });
@@ -158,6 +159,52 @@ describe("CoordinateAcquisition", () => {
 
     expect((screen.getByLabelText("Origin label") as HTMLInputElement).value).toBe("Tel Aviv Center");
     expect(screen.queryByText("No addresses found.")).toBeNull();
+  });
+
+  it("suggests addresses automatically as the user types, without waiting for Search", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      results: [{ label: "Tel Aviv Center", longitude: 34.81, latitude: 32.09 }],
+      attribution: "© OpenStreetMap contributors",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CoordinateAcquisition disabled={false} onSubmit={vi.fn().mockResolvedValue(undefined)} />);
+
+    fireEvent.change(screen.getAllByLabelText("Address")[0], { target: { value: "Te" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(fetchMock).not.toHaveBeenCalled(); // below the 3-character minimum
+
+    fireEvent.change(screen.getAllByLabelText("Address")[0], { target: { value: "Tel Aviv" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(399); });
+    expect(fetchMock).not.toHaveBeenCalled(); // debounced — not yet
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(screen.getByRole("button", { name: "Tel Aviv Center" })).toBeTruthy();
+
+    vi.useRealTimers();
+  });
+
+  it("does not re-fetch a debounced query after the user already picked a suggestion", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({
+      results: [{ label: "Tel Aviv Center", longitude: 34.81, latitude: 32.09 }],
+      attribution: "© OpenStreetMap contributors",
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<CoordinateAcquisition disabled={false} onSubmit={vi.fn().mockResolvedValue(undefined)} />);
+
+    fireEvent.change(screen.getAllByLabelText("Address")[0], { target: { value: "Tel Aviv" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(400); });
+    expect(screen.getByRole("button", { name: "Tel Aviv Center" })).toBeTruthy();
+    fetchMock.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Tel Aviv Center" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("No addresses found.")).toBeNull();
+
+    vi.useRealTimers();
   });
 
   it("hides the coordinate-picker map when hideMap is set", () => {

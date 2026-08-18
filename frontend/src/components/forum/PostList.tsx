@@ -30,12 +30,17 @@ export default function PostList(props: PostListProps): JSX.Element {
         </select>
       </label>
 
-      <p className="forum-feed__legend">
-        🤖 <strong>AI severity</strong> estimates how urgently drivers should treat a hazard
-        (Low/Medium/High) from the report's own text. <strong>AI duplicate</strong> flags reports
-        that likely describe the same hazard as another nearby report. Neither is verified by a
-        person — treat them as a helpful hint, not a guarantee.
-      </p>
+      <div className="forum-feed__legend">
+        <p>
+          🤖 <strong>AI severity</strong> estimates how urgently drivers should treat a hazard
+          (Low/Medium/High) from the report's own text.
+        </p>
+        <p>
+          🤖 <strong>AI duplicate</strong> flags reports that likely describe the same hazard as
+          another nearby report.
+        </p>
+        <p>Neither is verified by a person — treat them as a helpful hint, not a guarantee.</p>
+      </div>
 
       {props.items.length === 0 ? <p>No hazard reports yet.</p> : null}
 

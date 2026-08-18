@@ -149,15 +149,18 @@ async def explain_route(cost_breakdown: dict[str, Any], user_context: dict[str, 
     prompt = (
         "You are explaining a road-safety routing decision to the driver who requested it. "
         '"cost_breakdown.chosen" is the picked route; "cost_breakdown.alternatives" (if any) are '
-        "the other candidates it beat. Write one short paragraph (2-4 sentences), in plain "
-        "language, that: (1) names the concrete numbers that favored the chosen route over each "
-        "alternative — historical accident density, travel time, or both; (2) explains how the "
-        "driver's own profile (driving experience, vehicle type), the time of day, and the "
-        "driver's own chosen safety_preference (low/balanced/high — how much they personally "
-        "weigh safety vs. time) together shaped the safety-vs-time weighting "
-        "(safety_weight/time_weight) behind that choice. If "
-        '"alternatives" is empty, explain why the chosen route is safe on its own numbers '
-        'instead of comparing. Respond with strict JSON matching {"explanation": string}.\n'
+        "the other candidates it beat. Write exactly two short, plain-language sentences, each "
+        "on its own line (separated by a single newline character) so they read as two distinct "
+        "points, not one dense paragraph. Pick only the 1-2 most decisive numbers — do not "
+        "restate every metric. Line 1: the concrete number(s) that favored the chosen route over "
+        "each alternative — historical accident density, travel time, or both. If "
+        '"alternatives" is empty, state why the chosen route is safe on its own numbers instead '
+        "of comparing. Line 2: the single biggest reason the safety-vs-time weighting "
+        "(safety_weight/time_weight) came out the way it did — pick the most relevant one factor "
+        "among the driver's profile (driving experience, vehicle type), the time of day, and "
+        "their own chosen safety_preference (low/balanced/high), rather than listing all three. "
+        'Respond with strict JSON matching {"explanation": string}, where the string contains '
+        "the newline between the two sentences.\n"
         f"Cost breakdown: {json.dumps(cost_breakdown, default=str)}\n"
         f"Driver and scoring context: {json.dumps(user_context, default=str)}\n"
     )

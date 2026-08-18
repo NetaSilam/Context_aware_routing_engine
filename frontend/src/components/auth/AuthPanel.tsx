@@ -12,6 +12,7 @@ export default function AuthPanel(props: AuthPanelProps): JSX.Element {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [drivingExperience, setDrivingExperience] = useState<DrivingExperience>("experienced");
   const [vehicleType, setVehicleType] = useState<VehicleType>("car");
   const [avoidTolls, setAvoidTolls] = useState(false);
@@ -69,17 +70,29 @@ export default function AuthPanel(props: AuthPanelProps): JSX.Element {
               onChange={(event) => setEmail(event.target.value)}
             />
           </label>
-          <label className="filter-field">
-            <span>Password</span>
-            <input
-              type="password"
-              required
-              minLength={8}
-              maxLength={72}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </label>
+          <div className="filter-field">
+            <label htmlFor="auth-password">Password</label>
+            <span className="password-field">
+              <input
+                id="auth-password"
+                type={passwordVisible ? "text" : "password"}
+                required
+                minLength={8}
+                maxLength={72}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                type="button"
+                className="password-field__toggle"
+                aria-label={passwordVisible ? "Hide password" : "Show password"}
+                aria-pressed={passwordVisible}
+                onClick={() => setPasswordVisible((visible) => !visible)}
+              >
+                {passwordVisible ? "🙈" : "👁"}
+              </button>
+            </span>
+          </div>
         </div>
 
         {mode === "signup" ? (

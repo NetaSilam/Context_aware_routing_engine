@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MapContainer, Marker, TileLayer, useMapEvents } from "react-leaflet";
 
 import { searchAddresses, type AddressSearchResult } from "../../api/geocoding";
@@ -36,6 +36,9 @@ function MapClickHandler({ onClick }: { onClick: (latitude: number, longitude: n
   return null;
 }
 
+const AUTOCOMPLETE_DEBOUNCE_MS = 400;
+const AUTOCOMPLETE_MIN_CHARS = 3;
+
 export default function CoordinateAcquisition({ disabled, onSubmit, hideMap = false }: CoordinateAcquisitionProps): JSX.Element {
   const [coordinates, setCoordinates] = useState(INITIAL_COORDINATES);
   const [mapTarget, setMapTarget] = useState<Endpoint>("origin");
@@ -45,6 +48,9 @@ export default function CoordinateAcquisition({ disabled, onSubmit, hideMap = fa
   const [searching, setSearching] = useState<Endpoint | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  // An explicit selection shouldn't be clobbered by a debounce timer that was already
+  // in flight for the same (unchanged) query text — suppressed until the user types again.
+  const suppressAutoSearch = useRef<Record<Endpoint, boolean>>({ origin: false, destination: false });
 
   function updateNumeric(endpoint: Endpoint, field: "longitude" | "latitude", value: string) {
     setCoordinates((current) => {
@@ -54,6 +60,7 @@ export default function CoordinateAcquisition({ disabled, onSubmit, hideMap = fa
   }
 
   function selectAddress(endpoint: Endpoint, match: AddressSearchResult) {
+    suppressAutoSearch.current[endpoint] = true;
     setCoordinates((current) => ({
       ...current,
       [endpoint]: {
@@ -80,6 +87,24 @@ export default function CoordinateAcquisition({ disabled, onSubmit, hideMap = fa
       setSearching(null);
     }
   }
+
+  function autocompleteEffect(endpoint: Endpoint, query: string): () => void {
+    if (suppressAutoSearch.current[endpoint] || query.trim().length < AUTOCOMPLETE_MIN_CHARS) {
+      return () => {};
+    }
+    const timeoutId = window.setTimeout(() => {
+      // Re-checked at fire time: a manual search (button/Enter) or a selection made after
+      // this timer was scheduled must win instead of being clobbered moments later.
+      if (suppressAutoSearch.current[endpoint]) return;
+      void runSearch(endpoint);
+    }, AUTOCOMPLETE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeoutId);
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => autocompleteEffect("origin", searchQueries.origin), [searchQueries.origin]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => autocompleteEffect("destination", searchQueries.destination), [searchQueries.destination]);
 
   function selectMapCoordinate(latitude: number, longitude: number) {
     const next = { longitude: longitude.toFixed(6), latitude: latitude.toFixed(6), label: "" };
@@ -129,7 +154,7 @@ export default function CoordinateAcquisition({ disabled, onSubmit, hideMap = fa
   return (
     <section className="filters-panel" aria-label="Route coordinates">
       <h2>Choose origin and destination</h2>
-      <p>Search only when you press a search button. Map clicks and numeric fields remain available if search fails.</p>
+      <p>Suggestions appear as you type (3+ characters), or press Search. Map clicks and numeric fields remain available if search fails.</p>
       <div className="coordinate-search-grid">
         {(["origin", "destination"] as Endpoint[]).map((endpoint) => (
           <section key={endpoint} aria-label={`${endpoint} address search`}>
@@ -137,6 +162,7 @@ export default function CoordinateAcquisition({ disabled, onSubmit, hideMap = fa
             <form
               onSubmit={(event) => {
                 event.preventDefault();
+                suppressAutoSearch.current[endpoint] = true;
                 void runSearch(endpoint);
               }}
             >
@@ -145,7 +171,10 @@ export default function CoordinateAcquisition({ disabled, onSubmit, hideMap = fa
                 <input
                   maxLength={200}
                   value={searchQueries[endpoint]}
-                  onChange={(event) => setSearchQueries((current) => ({ ...current, [endpoint]: event.target.value }))}
+                  onChange={(event) => {
+                    suppressAutoSearch.current[endpoint] = false;
+                    setSearchQueries((current) => ({ ...current, [endpoint]: event.target.value }));
+                  }}
                 />
               </label>
               <button type="submit" className="ghost-button" disabled={searching !== null}>

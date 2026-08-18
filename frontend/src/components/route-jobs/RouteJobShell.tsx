@@ -99,15 +99,20 @@ function RouteResult({
               <dt>Distance</dt><dd>{(candidate.distance_m / 1000).toFixed(1)} km</dd>
               <dt>Duration</dt><dd>{Math.round(candidate.duration_seconds / 60)} min</dd>
               <dt>Historical accident density</dt><dd>{candidate.historical_accident_density_per_km.toFixed(2)} per matched km</dd>
-              <dt>Matched length</dt><dd>{(candidate.matched_route_length_m / 1000).toFixed(1)} km</dd>
               <dt>Coverage</dt><dd>{percent(candidate.coverage)}</dd>
-              <dt>Accident score</dt><dd>{candidate.accident_score.toFixed(2)}</dd>
-              <dt>Normalized risk</dt><dd>{candidate.normalized_risk.toFixed(3)}</dd>
-              <dt>Time penalty</dt><dd>{candidate.time_penalty.toFixed(3)}</dd>
-              <dt>Safety contribution</dt><dd>{candidate.safety_contribution.toFixed(3)}</dd>
-              <dt>Time contribution</dt><dd>{candidate.time_contribution.toFixed(3)}</dd>
               <dt>Final cost</dt><dd>{candidate.final_cost.toFixed(3)}</dd>
             </dl>
+            <details className="route-candidate-details">
+              <summary>Show calculation details</summary>
+              <dl>
+                <dt>Matched length</dt><dd>{(candidate.matched_route_length_m / 1000).toFixed(1)} km</dd>
+                <dt>Accident score</dt><dd>{candidate.accident_score.toFixed(2)}</dd>
+                <dt>Normalized risk</dt><dd>{candidate.normalized_risk.toFixed(3)}</dd>
+                <dt>Time penalty</dt><dd>{candidate.time_penalty.toFixed(3)}</dd>
+                <dt>Safety contribution</dt><dd>{candidate.safety_contribution.toFixed(3)}</dd>
+                <dt>Time contribution</dt><dd>{candidate.time_contribution.toFixed(3)}</dd>
+              </dl>
+            </details>
             {candidate.warning ? <p className="error-banner">{candidate.warning}</p> : null}
           </article>
         ))}
@@ -115,12 +120,17 @@ function RouteResult({
       <p>{result.risk_metric_description}</p>
       <dl className="route-version-details">
         <dt>Safety/time weights</dt><dd>{result.safety_weight.toFixed(2)} / {result.time_weight.toFixed(2)}</dd>
-        <dt>Safety factors</dt><dd>{Object.entries(result.safety_factor_contributions).map(([name, value]) => `${name} ${value.toFixed(2)}`).join(", ")}</dd>
         <dt>Safety preference</dt><dd>{result.safety_preference} (×{result.safety_preference_multiplier.toFixed(2)})</dd>
-        <dt>Reference risk p95</dt><dd>{result.reference_risk_p95.toFixed(3)}</dd>
-        <dt>Accident years</dt><dd>{result.included_year_start}–{result.included_year_end}</dd>
-        <dt>Formula / data / matcher / graph</dt><dd>{result.formula_version} / {result.risk_data_version} / {result.matcher_version} / {result.graph_version}</dd>
       </dl>
+      <details className="route-candidate-details">
+        <summary>Show scoring details</summary>
+        <dl className="route-version-details">
+          <dt>Safety factors</dt><dd>{Object.entries(result.safety_factor_contributions).map(([name, value]) => `${name} ${value.toFixed(2)}`).join(", ")}</dd>
+          <dt>Reference risk p95</dt><dd>{result.reference_risk_p95.toFixed(3)}</dd>
+          <dt>Accident years</dt><dd>{result.included_year_start}–{result.included_year_end}</dd>
+          <dt>Formula / data / matcher / graph</dt><dd>{result.formula_version} / {result.risk_data_version} / {result.matcher_version} / {result.graph_version}</dd>
+        </dl>
+      </details>
     </div>
   );
 }

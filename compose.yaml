@@ -65,6 +65,11 @@ services:
       EXPECTED_OSRM_GRAPH_VERSION: ${EXPECTED_OSRM_GRAPH_VERSION:?Set EXPECTED_OSRM_GRAPH_VERSION in .env}
       GEOCODER_BASE_URL: ${GEOCODER_BASE_URL:?Set GEOCODER_BASE_URL in .env}
       GEOCODER_USER_AGENT: ${GEOCODER_USER_AGENT:?Set GEOCODER_USER_AGENT in .env}
+      # Overrides the default /data/forum-media: /data itself is a read-only bind mount
+      # here (unlike api/worker), and Docker cannot layer a writable volume underneath an
+      # already-read-only mount point. Same underlying forum_media volume, different path —
+      # api/worker still resolve the same files via their own default path.
+      FORUM_MEDIA_STORAGE_PATH: /forum-media
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,6 +77,7 @@ services:
         condition: service_healthy
     volumes:
       - ./data:/data:ro
+      - forum_media:/forum-media
     restart: "no"
 
   api:

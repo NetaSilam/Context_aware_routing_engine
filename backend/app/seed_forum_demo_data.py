@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import struct
+import zlib
 from datetime import datetime, timedelta, timezone
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -9,6 +11,8 @@ import psycopg
 from psycopg.rows import dict_row
 
 from app.auth import hash_password
+from app.config import get_settings
+from app.forum.media_storage import write_media_file
 from app.initialize_foundation import synchronous_database_url
 
 _SEED_NAMESPACE = uuid5(NAMESPACE_URL, "https://sa-bracha.example/forum-seed")
@@ -18,6 +22,20 @@ _NOW = datetime.now(timezone.utc)
 
 def _seed_uuid(key: str) -> UUID:
     return uuid5(_SEED_NAMESPACE, key)
+
+
+def _solid_color_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    """A minimal, dependency-free solid-color PNG, used as a stand-in demo photo — the
+    seed script otherwise has no source of real hazard photography to attach."""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    signature = b"\x89PNG\r\n\x1a\n"
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    row = bytes([0]) + bytes(rgb) * width
+    idat = zlib.compress(row * height, 9)
+    return signature + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
 
 
 def _days_ago(days: float) -> datetime:
@@ -125,6 +143,18 @@ SEED_COMMENTS: list[dict[str, object]] = [
     {"key": "seed-comment-11", "post_key": "seed-post-other-1", "author_key": "seed-user-5", "is_anonymous": False, "days_ago": 19, "body": "Mostly swept away by the wind, minor now."},
 ]
 
+# One demo photo (a solid-color placeholder, see _solid_color_png) on most posts, so the
+# feed reads as a populated, photo-driven forum rather than text-only rows.
+SEED_POST_MEDIA: list[dict[str, object]] = [
+    {"key": "seed-media-pothole-1", "post_key": "seed-post-pothole-1", "color": (96, 92, 88)},
+    {"key": "seed-media-pothole-2", "post_key": "seed-post-pothole-2", "color": (104, 98, 84)},
+    {"key": "seed-media-flooding-1", "post_key": "seed-post-flooding-1", "color": (66, 108, 148)},
+    {"key": "seed-media-broken-signal-1", "post_key": "seed-post-broken-signal-1", "color": (176, 62, 48)},
+    {"key": "seed-media-poor-lighting-1", "post_key": "seed-post-poor-lighting-1", "color": (40, 42, 58)},
+    {"key": "seed-media-speed-bump-1", "post_key": "seed-post-speed-bump-1", "color": (70, 70, 72)},
+    {"key": "seed-media-crash-1", "post_key": "seed-post-crash-1", "color": (150, 42, 40)},
+]
+
 # A handful of up/down votes; never the author voting on their own content.
 SEED_VOTES: list[dict[str, object]] = [
     {"target_type": "post", "target_key": "seed-post-pothole-1", "voter_key": "seed-user-2", "value": 1},
@@ -196,6 +226,34 @@ def _seed_posts(connection: psycopg.Connection[dict], user_ids: dict[str, int]) 
             ),
         )
     return post_ids
+
+
+def _seed_post_media(connection: psycopg.Connection[dict], post_ids: dict[str, UUID]) -> int:
+    """Writes each demo image to disk and inserts its row, but only the first time — unlike
+    posts/comments' plain INSERT ... ON CONFLICT DO NOTHING, this must check for the row
+    before writing the file too, since re-running would otherwise leak an orphaned file on
+    every container restart even though the (idempotent) DB insert itself would no-op."""
+    settings = get_settings()
+    seeded = 0
+    for media in SEED_POST_MEDIA:
+        media_id = _seed_uuid(str(media["key"]))
+        already_seeded = connection.execute(
+            "SELECT 1 FROM app.forum_post_media WHERE id = %s", (media_id,)
+        ).fetchone()
+        if already_seeded is not None:
+            continue
+        png_bytes = _solid_color_png(640, 400, media["color"])  # type: ignore[arg-type]
+        storage_key = write_media_file(settings, png_bytes)
+        connection.execute(
+            """
+            INSERT INTO app.forum_post_media
+                (id, post_id, media_type, storage_key, content_type, byte_size)
+            VALUES (%s, %s, 'image', %s, 'image/png', %s)
+            """,
+            (media_id, post_ids[str(media["post_key"])], storage_key, len(png_bytes)),
+        )
+        seeded += 1
+    return seeded
 
 
 def _seed_comments(
@@ -346,6 +404,7 @@ def seed_forum_demo_data(database_url: str) -> dict[str, int]:
             connection.execute("SELECT pg_advisory_xact_lock(hashtext('app.forum-demo-seed'))")
             user_ids = _seed_users(connection)
             post_ids = _seed_posts(connection, user_ids)
+            _seed_post_media(connection, post_ids)
             comment_ids = _seed_comments(connection, user_ids, post_ids)
             _seed_votes(connection, user_ids, post_ids, comment_ids)
             _recompute_counters(connection)
@@ -367,6 +426,7 @@ def seed_forum_demo_data(database_url: str) -> dict[str, int]:
         "users": len(user_ids),
         "posts": len(post_ids),
         "comments": len(comment_ids),
+        "media": len(SEED_POST_MEDIA),
         "votes": len(SEED_VOTES),
     }
 
