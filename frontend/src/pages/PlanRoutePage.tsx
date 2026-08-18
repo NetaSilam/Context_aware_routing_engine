@@ -7,7 +7,8 @@ import CoordinateAcquisition from "../components/route-jobs/CoordinateAcquisitio
 import RouteJobShell from "../components/route-jobs/RouteJobShell";
 import RouteHistoryPanel from "../components/route-jobs/RouteHistoryPanel";
 import { createIdempotencyKey } from "../lib/idempotencyKey";
-import type { DrivingExperience, UserProfile, VehicleType } from "../types/auth";
+import { SAFETY_PREFERENCE_LABELS } from "../types/auth";
+import type { DrivingExperience, SafetyPreference, UserProfile, VehicleType } from "../types/auth";
 import type { NavigationHandoff } from "../types/navigation";
 import type { RouteCandidateResult, RouteJob } from "../types/routeJobs";
 
@@ -33,6 +34,7 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
   const [vehicleType, setVehicleType] = useState(props.user.vehicle_type);
   const [avoidTolls, setAvoidTolls] = useState(props.user.avoid_tolls);
   const [avoidHighways, setAvoidHighways] = useState(props.user.avoid_highways);
+  const [safetyPreference, setSafetyPreference] = useState(props.user.safety_preference);
   const initialJobId = new URLSearchParams(window.location.search).get("routeJob");
   const [jobId, setJobId] = useState<string | null>(initialJobId);
   const [job, setJob] = useState<RouteJob | null>(null);
@@ -96,6 +98,7 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
         vehicle_type: vehicleType,
         avoid_tolls: avoidTolls,
         avoid_highways: avoidHighways,
+        safety_preference: safetyPreference,
       });
       props.onProfileUpdated(updated);
       setEditing(false);
@@ -155,6 +158,7 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
         vehicle_type: props.user.vehicle_type,
         avoid_tolls: props.user.avoid_tolls,
         avoid_highways: props.user.avoid_highways,
+        safety_preference: props.user.safety_preference,
         reference_risk_p95: job.result.reference_risk_p95,
         risk_data_version: job.result.risk_data_version,
       },
@@ -205,6 +209,7 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
                 {capitalize(props.user.driving_experience)} driver · {capitalize(props.user.vehicle_type)}
                 {props.user.avoid_highways ? " · avoids highways" : ""}
                 {props.user.avoid_tolls ? " · avoids tolls" : ""}
+                {props.user.safety_preference !== "balanced" ? ` · ${props.user.safety_preference} safety preference` : ""}
               </p>
             </div>
           </div>
@@ -234,6 +239,14 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
             </label>
             <label><input type="checkbox" checked={avoidHighways} onChange={(event) => setAvoidHighways(event.target.checked)} /> Avoid highways</label>
             <label><input type="checkbox" checked={avoidTolls} onChange={(event) => setAvoidTolls(event.target.checked)} /> Avoid tolls</label>
+            <label>
+              How much do you weigh safety vs. time?
+              <select value={safetyPreference} onChange={(event) => setSafetyPreference(event.target.value as SafetyPreference)}>
+                {(Object.keys(SAFETY_PREFERENCE_LABELS) as SafetyPreference[]).map((option) => (
+                  <option key={option} value={option}>{SAFETY_PREFERENCE_LABELS[option]}</option>
+                ))}
+              </select>
+            </label>
             <button type="submit" className="primary-button" disabled={saving}>Save preferences</button>
           </form>
         ) : null}

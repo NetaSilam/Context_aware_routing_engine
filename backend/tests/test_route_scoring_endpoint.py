@@ -81,6 +81,26 @@ def test_scoring_endpoint_exposes_pure_contract_only_when_testing_is_enabled(
         get_settings.cache_clear()
 
 
+def test_scoring_endpoint_applies_the_safety_preference_multiplier(monkeypatch) -> None:
+    monkeypatch.setenv("TESTING", "true")
+    get_settings.cache_clear()
+    try:
+        payload = scoring_payload()
+        payload["context"]["driving_experience"] = "experienced"  # type: ignore[index]
+        payload["context"]["safety_preference"] = "high"  # type: ignore[index]
+        with TestClient(create_app()) as client:
+            response = client.post("/api/testing/score-route-candidates", json=payload)
+        assert response.status_code == 200
+        body = response.json()
+        # Automatic weight here is 0.5 (base 0.4 + night 0.1); "high" is 1.3x -> 0.65,
+        # comfortably under the 0.90 cap so this actually exercises the multiplier.
+        assert body["safety_weight"] == pytest.approx(0.5 * 1.3)
+        assert body["safety_preference"] == "high"
+        assert body["safety_preference_multiplier"] == pytest.approx(1.3)
+    finally:
+        get_settings.cache_clear()
+
+
 def test_scoring_endpoint_rejects_invalid_reference_and_naive_timestamp(
     monkeypatch,
 ) -> None:

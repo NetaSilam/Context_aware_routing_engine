@@ -202,6 +202,7 @@ def _calculate_result(job: tuple[Any, ...]) -> tuple[dict[str, Any], int, int]:
             driving_experience=snapshot["driving_experience"],
             vehicle_type=snapshot["vehicle_type"],
             submitted_at=datetime.fromisoformat(snapshot["submitted_at"]),
+            safety_preference=snapshot["safety_preference"],
         ),
         reference_risk_p95=snapshot["reference_risk_p95"],
         risk_data_version=snapshot["risk_data_version"],
@@ -223,6 +224,8 @@ def _calculate_result(job: tuple[Any, ...]) -> tuple[dict[str, Any], int, int]:
         "safety_weight": scoring.safety_weight,
         "time_weight": scoring.time_weight,
         "safety_factor_contributions": asdict(scoring.safety_factor_contributions),
+        "safety_preference": scoring.safety_preference,
+        "safety_preference_multiplier": scoring.safety_preference_multiplier,
         "reference_risk_p95": scoring.reference_risk_p95,
         "low_coverage_threshold": scoring.low_coverage_threshold,
         "risk_data_version": scoring.risk_data_version,
@@ -283,6 +286,7 @@ def _enqueue_route_explanation_if_possible(
             "time_context": result["time_context"],
             "safety_weight": result["safety_weight"],
             "time_weight": result["time_weight"],
+            "safety_preference": result["safety_preference"],
         },
     )
 

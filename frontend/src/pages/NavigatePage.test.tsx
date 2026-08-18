@@ -102,6 +102,7 @@ function handoffFixture(): NavigationHandoff {
       vehicle_type: "car",
       avoid_tolls: false,
       avoid_highways: false,
+      safety_preference: "balanced",
       reference_risk_p95: 3,
       risk_data_version: "risk-v1",
     },

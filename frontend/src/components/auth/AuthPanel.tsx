@@ -1,7 +1,8 @@
 import { useState } from "react";
 
 import { login, signup } from "../../api/auth";
-import type { DrivingExperience, UserProfile, VehicleType } from "../../types/auth";
+import { SAFETY_PREFERENCE_LABELS } from "../../types/auth";
+import type { DrivingExperience, SafetyPreference, UserProfile, VehicleType } from "../../types/auth";
 
 interface AuthPanelProps {
   onAuthenticated: (user: UserProfile) => void;
@@ -15,6 +16,7 @@ export default function AuthPanel(props: AuthPanelProps): JSX.Element {
   const [vehicleType, setVehicleType] = useState<VehicleType>("car");
   const [avoidTolls, setAvoidTolls] = useState(false);
   const [avoidHighways, setAvoidHighways] = useState(false);
+  const [safetyPreference, setSafetyPreference] = useState<SafetyPreference>("balanced");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -33,6 +35,7 @@ export default function AuthPanel(props: AuthPanelProps): JSX.Element {
               vehicle_type: vehicleType,
               avoid_tolls: avoidTolls,
               avoid_highways: avoidHighways,
+              safety_preference: safetyPreference,
             });
       props.onAuthenticated(user);
     } catch (err) {
@@ -100,6 +103,19 @@ export default function AuthPanel(props: AuthPanelProps): JSX.Element {
                 <option value="car">Car</option>
                 <option value="motorcycle">Motorcycle</option>
                 <option value="truck">Truck</option>
+              </select>
+            </label>
+            <label className="filter-field">
+              <span>How much do you weigh safety vs. time?</span>
+              <select
+                value={safetyPreference}
+                onChange={(event) => setSafetyPreference(event.target.value as SafetyPreference)}
+              >
+                {(Object.keys(SAFETY_PREFERENCE_LABELS) as SafetyPreference[]).map((option) => (
+                  <option key={option} value={option}>
+                    {SAFETY_PREFERENCE_LABELS[option]}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="filter-field">

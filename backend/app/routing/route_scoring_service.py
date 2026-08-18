@@ -9,8 +9,16 @@ from app.routing.time_context import IsraelTimeContext, get_israel_time_context
 
 DrivingExperience = Literal["novice", "experienced"]
 VehicleType = Literal["car", "motorcycle", "truck"]
+SafetyPreference = Literal["low", "balanced", "high"]
 
 SCORING_FORMULA_VERSION = "route-scoring-v1"
+SAFETY_WEIGHT_CAP = 0.90
+SAFETY_WEIGHT_FLOOR = 0.10
+SAFETY_PREFERENCE_MULTIPLIERS: dict[SafetyPreference, float] = {
+    "low": 0.7,
+    "balanced": 1.0,
+    "high": 1.3,
+}
 RISK_METRIC_NAME = "historical_accident_density_per_km"
 RISK_METRIC_DESCRIPTION = (
     "Historical accident density is a historical risk proxy based on matched corridors."
@@ -36,6 +44,7 @@ class UserScoringContext:
     driving_experience: DrivingExperience
     vehicle_type: VehicleType
     submitted_at: datetime
+    safety_preference: SafetyPreference
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,8 @@ class RouteScoringResult:
     safety_weight: float
     time_weight: float
     safety_factor_contributions: SafetyFactorContributions
+    safety_preference: SafetyPreference
+    safety_preference_multiplier: float
     reference_risk_p95: float
     low_coverage_threshold: float
     risk_data_version: str
@@ -115,7 +126,16 @@ def score_route_candidates(
     )
     time_context = get_israel_time_context(context.submitted_at)
     factors = calculate_safety_factors(context, time_context)
-    safety_weight = min(factors.uncapped_total, 0.90)
+    automatic_safety_weight = min(factors.uncapped_total, SAFETY_WEIGHT_CAP)
+    safety_preference_multiplier = SAFETY_PREFERENCE_MULTIPLIERS[context.safety_preference]
+    # The automatic weight (driving experience/vehicle/time of day) reflects an objective
+    # baseline need that shouldn't disappear just because the driver personally weighs safety
+    # lower today — the multiplier scales that baseline rather than replacing it, and the floor
+    # keeps Wtime from fully dominating even at the "low" preference on an already-low baseline.
+    safety_weight = max(
+        SAFETY_WEIGHT_FLOOR,
+        min(automatic_safety_weight * safety_preference_multiplier, SAFETY_WEIGHT_CAP),
+    )
     time_weight = 1.0 - safety_weight
     fastest_duration = min(candidate.duration_seconds for candidate in candidates)
 
@@ -170,6 +190,8 @@ def score_route_candidates(
         safety_weight=safety_weight,
         time_weight=time_weight,
         safety_factor_contributions=factors,
+        safety_preference=context.safety_preference,
+        safety_preference_multiplier=safety_preference_multiplier,
         reference_risk_p95=reference_risk_p95,
         low_coverage_threshold=low_coverage_threshold,
         risk_data_version=risk_data_version,
@@ -185,6 +207,8 @@ def _validate_context(context: UserScoringContext) -> None:
         raise ValueError("unsupported driving_experience")
     if context.vehicle_type not in ("car", "motorcycle", "truck"):
         raise ValueError("unsupported vehicle_type")
+    if context.safety_preference not in SAFETY_PREFERENCE_MULTIPLIERS:
+        raise ValueError("unsupported safety_preference")
 
 
 def _validate_scoring_inputs(

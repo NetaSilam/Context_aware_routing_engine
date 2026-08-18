@@ -13,7 +13,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const me = { id: 1, email: "me@example.com", driving_experience: "experienced" as const, vehicle_type: "car" as const, avoid_tolls: false, avoid_highways: false };
+const me = { id: 1, email: "me@example.com", driving_experience: "experienced" as const, vehicle_type: "car" as const, avoid_tolls: false, avoid_highways: false, safety_preference: "balanced" as const };
 
 const conversation = {
   other_user_id: 42,

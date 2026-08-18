@@ -9,6 +9,8 @@ from app.routing.route_scoring_service import (
     LOW_COVERAGE_WARNING,
     RISK_METRIC_DESCRIPTION,
     RISK_METRIC_NAME,
+    SAFETY_WEIGHT_CAP,
+    SAFETY_WEIGHT_FLOOR,
     SCORING_FORMULA_VERSION,
     CandidateRouteMeasurement,
     UserScoringContext,
@@ -44,11 +46,13 @@ def context(
     driving_experience: str = "experienced",
     vehicle_type: str = "car",
     hour: int = 12,
+    safety_preference: str = "balanced",
 ) -> UserScoringContext:
     return UserScoringContext(
         driving_experience=driving_experience,  # type: ignore[arg-type]
         vehicle_type=vehicle_type,  # type: ignore[arg-type]
         submitted_at=datetime(2026, 1, 15, hour, tzinfo=ISRAEL_TIME_ZONE),
+        safety_preference=safety_preference,  # type: ignore[arg-type]
     )
 
 
@@ -95,6 +99,39 @@ def test_safety_rule_returns_factors_cap_and_complementary_weights(
 
 
 @pytest.mark.parametrize(
+    ("preference", "expected_weight"),
+    [("low", 0.40 * 0.7), ("balanced", 0.40), ("high", 0.40 * 1.3)],
+)
+def test_safety_preference_multiplies_the_automatic_weight(
+    preference: str, expected_weight: float
+) -> None:
+    result = score([candidate(0)], context("experienced", "car", 12, preference))
+
+    assert result.safety_weight == pytest.approx(expected_weight)
+    assert result.time_weight == pytest.approx(1 - expected_weight)
+    assert result.safety_preference == preference
+    assert result.safety_preference_multiplier == {"low": 0.7, "balanced": 1.0, "high": 1.3}[preference]
+    # The automatic (pre-preference) factor breakdown is unaffected by the preference —
+    # it still reflects the objective driving-experience/vehicle/time-of-day baseline.
+    assert result.safety_factor_contributions.base == 0.40
+
+
+def test_safety_preference_cap_still_applies_after_the_multiplier() -> None:
+    # novice + motorcycle + night = 0.20+0.20+0.10+0.40 base = 0.90, already at the cap.
+    # A 1.3x "high" multiplier on top of that must not push Wsafe above the cap.
+    result = score([candidate(0)], context("novice", "motorcycle", 5, "high"))
+
+    assert result.safety_weight == SAFETY_WEIGHT_CAP
+    assert result.time_weight == pytest.approx(1 - SAFETY_WEIGHT_CAP)
+
+
+def test_safety_preference_never_pushes_the_weight_below_the_floor() -> None:
+    result = score([candidate(0)], context("experienced", "car", 12, "low"))
+
+    assert result.safety_weight >= SAFETY_WEIGHT_FLOOR
+
+
+@pytest.mark.parametrize(
     ("local_hour", "local_minute", "expected_period"),
     [(5, 59, "night"), (6, 0, "day"), (18, 59, "day"), (19, 0, "night")],
 )
@@ -125,7 +162,7 @@ def test_naive_submission_time_is_rejected() -> None:
     with pytest.raises(ValueError, match="UTC offset"):
         score(
             [candidate(0)],
-            UserScoringContext("experienced", "car", datetime(2026, 1, 1, 12)),
+            UserScoringContext("experienced", "car", datetime(2026, 1, 1, 12), "balanced"),
         )
 
 

@@ -9,6 +9,7 @@ const profile = {
   vehicle_type: "car" as const,
   avoid_tolls: false,
   avoid_highways: false,
+  safety_preference: "balanced" as const,
 };
 
 afterEach(() => vi.unstubAllGlobals());
@@ -27,6 +28,7 @@ describe("authentication API", () => {
       vehicle_type: "truck",
       avoid_tolls: true,
       avoid_highways: true,
+      safety_preference: "high",
     });
 
     for (const call of fetchMock.mock.calls) {

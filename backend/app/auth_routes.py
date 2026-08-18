@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 DrivingExperience = Literal["novice", "experienced"]
 VehicleType = Literal["car", "motorcycle", "truck"]
+SafetyPreference = Literal["low", "balanced", "high"]
 
 
 class StrictRequest(BaseModel):
@@ -39,6 +40,7 @@ class SignupRequest(StrictRequest):
     vehicle_type: VehicleType = "car"
     avoid_tolls: bool = False
     avoid_highways: bool = False
+    safety_preference: SafetyPreference = "balanced"
 
     @field_validator("email", mode="before")
     @classmethod
@@ -75,6 +77,7 @@ class PreferencesUpdate(StrictRequest):
     vehicle_type: VehicleType | None = None
     avoid_tolls: bool | None = None
     avoid_highways: bool | None = None
+    safety_preference: SafetyPreference | None = None
 
 
 class UserProfile(BaseModel):
@@ -84,6 +87,7 @@ class UserProfile(BaseModel):
     vehicle_type: VehicleType
     avoid_tolls: bool
     avoid_highways: bool
+    safety_preference: SafetyPreference
 
 
 def set_session_cookie(response: Response, token: str) -> None:
@@ -113,9 +117,9 @@ async def signup(payload: SignupRequest, request: Request, response: Response) -
     sql = text(
         """
         INSERT INTO app.users
-            (email, password_hash, driving_experience, vehicle_type, avoid_tolls, avoid_highways)
-        VALUES (:email, :password_hash, :driving_experience, :vehicle_type, :avoid_tolls, :avoid_highways)
-        RETURNING id, email, driving_experience, vehicle_type, avoid_tolls, avoid_highways
+            (email, password_hash, driving_experience, vehicle_type, avoid_tolls, avoid_highways, safety_preference)
+        VALUES (:email, :password_hash, :driving_experience, :vehicle_type, :avoid_tolls, :avoid_highways, :safety_preference)
+        RETURNING id, email, driving_experience, vehicle_type, avoid_tolls, avoid_highways, safety_preference
         """
     )
     try:
@@ -134,7 +138,7 @@ async def login(payload: LoginRequest, request: Request, response: Response) -> 
     await enforce_auth_rate_limit("login", request)
     sql = text(
         """SELECT id, email, password_hash, driving_experience, vehicle_type,
-                  avoid_tolls, avoid_highways FROM app.users WHERE email = :email"""
+                  avoid_tolls, avoid_highways, safety_preference FROM app.users WHERE email = :email"""
     )
     async with get_engine().begin() as conn:
         row = (await conn.execute(sql, {"email": email})).mappings().first()

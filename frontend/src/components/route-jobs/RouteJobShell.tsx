@@ -116,6 +116,7 @@ function RouteResult({
       <dl className="route-version-details">
         <dt>Safety/time weights</dt><dd>{result.safety_weight.toFixed(2)} / {result.time_weight.toFixed(2)}</dd>
         <dt>Safety factors</dt><dd>{Object.entries(result.safety_factor_contributions).map(([name, value]) => `${name} ${value.toFixed(2)}`).join(", ")}</dd>
+        <dt>Safety preference</dt><dd>{result.safety_preference} (×{result.safety_preference_multiplier.toFixed(2)})</dd>
         <dt>Reference risk p95</dt><dd>{result.reference_risk_p95.toFixed(3)}</dd>
         <dt>Accident years</dt><dd>{result.included_year_start}–{result.included_year_end}</dd>
         <dt>Formula / data / matcher / graph</dt><dd>{result.formula_version} / {result.risk_data_version} / {result.matcher_version} / {result.graph_version}</dd>

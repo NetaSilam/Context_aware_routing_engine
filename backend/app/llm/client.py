@@ -152,8 +152,10 @@ async def explain_route(cost_breakdown: dict[str, Any], user_context: dict[str, 
         "the other candidates it beat. Write one short paragraph (2-4 sentences), in plain "
         "language, that: (1) names the concrete numbers that favored the chosen route over each "
         "alternative — historical accident density, travel time, or both; (2) explains how the "
-        "driver's own profile (driving experience, vehicle type) and the time of day shaped the "
-        "safety-vs-time weighting (safety_weight/time_weight) behind that choice. If "
+        "driver's own profile (driving experience, vehicle type), the time of day, and the "
+        "driver's own chosen safety_preference (low/balanced/high — how much they personally "
+        "weigh safety vs. time) together shaped the safety-vs-time weighting "
+        "(safety_weight/time_weight) behind that choice. If "
         '"alternatives" is empty, explain why the chosen route is safe on its own numbers '
         'instead of comparing. Respond with strict JSON matching {"explanation": string}.\n'
         f"Cost breakdown: {json.dumps(cost_breakdown, default=str)}\n"

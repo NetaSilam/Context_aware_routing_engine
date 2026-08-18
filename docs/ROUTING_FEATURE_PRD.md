@@ -812,3 +812,33 @@ detects the driver has deviated from the planned polyline.
   foundation; authentication; risk benchmark; scoring/OSRM contracts; jobs/history/protection;
   frontend; real OSRM artifact; final Nginx and full-system validation. Each milestone adds its
   relevant tests before the next begins.
+
+## Safety Preference Extension
+
+Added after the original PRD: a user-level `safety_preference` (`low` / `balanced` / `high`,
+default `balanced`) that lets the driver state how much they personally weigh safety versus
+time, set via signup or profile preferences and reused as-is on reroutes.
+
+- **A multiplier on the automatic weight, not a replacement or a free slider.** Decision 25
+  deliberately derives `Wsafe` from an objective rule (driving experience, vehicle type, time
+  of day) rather than free-form user input, and "Out of Scope" explicitly rules out per-trip
+  manual safety sliders — that reasoning (an explainable, reproducible ranking; TA feedback
+  favoring one complementary weight over independent ones) still holds. `safety_preference` adds
+  a bounded, named-option layer on top instead of reopening that decision: it multiplies the
+  automatically-derived `Wsafe` by a fixed factor (`low`=0.7, `balanced`=1.0, `high`=1.3) rather
+  than replacing it, so an objectively elevated baseline (e.g. a novice motorcyclist at night)
+  isn't erased just because the driver personally weighs safety lower that day.
+- **Clamped on both sides.** The existing 0.90 cap is re-applied *after* the multiplier (a 1.3x
+  multiplier on an already-capped 0.90 baseline would otherwise exceed 1.0), and a new 0.10
+  floor keeps `Wtime` from fully dominating even at the `low` preference on an already-low
+  baseline. See `SAFETY_WEIGHT_CAP`/`SAFETY_WEIGHT_FLOOR` in `route_scoring_service.py`.
+  `safety_preference` and the resolved `safety_preference_multiplier` are both persisted in the
+  route job's result and displayed alongside the existing safety factor breakdown, so the
+  choice remains auditable the same way the automatic factors already are.
+- **Reused verbatim on reroute**, not re-derived — `RerouteScoringContext` carries the same
+  `safety_preference` the original plan job snapshotted, matching the existing pattern for
+  `driving_experience`/`vehicle_type`/`avoid_tolls`/`avoid_highways` (decision: a reroute is
+  scored with the same weighting the driver already chose to trust).
+- **Included in the LLM route explanation's `user_context`**, alongside the existing
+  `driving_experience`/`vehicle_type`/`time_context`, so the explanation can name it as one of
+  the reasons behind the safety-vs-time weighting, not just the automatic factors.

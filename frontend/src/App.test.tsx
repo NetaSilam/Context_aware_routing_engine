@@ -11,6 +11,7 @@ const profile = {
   vehicle_type: "car",
   avoid_tolls: false,
   avoid_highways: false,
+  safety_preference: "balanced",
 };
 
 function jsonResponse(body: unknown, status = 200): Response {

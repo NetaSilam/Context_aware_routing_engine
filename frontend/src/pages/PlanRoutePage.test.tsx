@@ -19,7 +19,7 @@ afterEach(() => {
   cleanup();
 });
 
-const profile = { id: 1, email: "driver@example.com", driving_experience: "experienced" as const, vehicle_type: "car" as const, avoid_tolls: false, avoid_highways: false };
+const profile = { id: 1, email: "driver@example.com", driving_experience: "experienced" as const, vehicle_type: "car" as const, avoid_tolls: false, avoid_highways: false, safety_preference: "balanced" as const };
 
 describe("PlanRoutePage", () => {
   it("renders the authenticated profile and asynchronous route shell", () => {
@@ -32,7 +32,7 @@ describe("PlanRoutePage", () => {
 
   it("updates the allowed route preferences through the authenticated API", async () => {
     const user = userEvent.setup();
-    const updated = { ...profile, driving_experience: "novice" as const, vehicle_type: "truck" as const, avoid_tolls: true, avoid_highways: true };
+    const updated = { ...profile, driving_experience: "novice" as const, vehicle_type: "truck" as const, avoid_tolls: true, avoid_highways: true, safety_preference: "high" as const };
     const onProfileUpdated = vi.fn();
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => Promise.resolve(
       new Response(JSON.stringify(String(input).startsWith("/api/route-history?")
@@ -47,6 +47,7 @@ describe("PlanRoutePage", () => {
     await user.selectOptions(screen.getByLabelText("Vehicle type"), "truck");
     await user.click(screen.getByLabelText("Avoid highways"));
     await user.click(screen.getByLabelText("Avoid tolls"));
+    await user.selectOptions(screen.getByLabelText("How much do you weigh safety vs. time?"), "high");
     await user.click(screen.getByRole("button", { name: "Save preferences" }));
 
     await waitFor(() => expect(onProfileUpdated).toHaveBeenCalledWith(updated));
@@ -68,6 +69,7 @@ describe("PlanRoutePage", () => {
       result: {
         schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
         safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+        safety_preference: "balanced", safety_preference_multiplier: 1,
         reference_risk_p95: 2, low_coverage_threshold: 0.8,
         risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
         included_year_start: 2020, included_year_end: 2023,
@@ -108,6 +110,7 @@ describe("PlanRoutePage", () => {
       result: {
         schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
         safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+        safety_preference: "balanced", safety_preference_multiplier: 1,
         reference_risk_p95: 2, low_coverage_threshold: 0.8,
         risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
         included_year_start: 2020, included_year_end: 2023,
@@ -143,6 +146,7 @@ describe("PlanRoutePage", () => {
       result: {
         schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
         safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+        safety_preference: "balanced", safety_preference_multiplier: 1,
         reference_risk_p95: 2, low_coverage_threshold: 0.8,
         risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
         included_year_start: 2020, included_year_end: 2023,
@@ -182,6 +186,7 @@ describe("PlanRoutePage", () => {
       result: {
         schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
         safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+        safety_preference: "balanced", safety_preference_multiplier: 1,
         reference_risk_p95: 2, low_coverage_threshold: 0.8,
         risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
         included_year_start: 2020, included_year_end: 2023,
@@ -224,6 +229,7 @@ describe("PlanRoutePage", () => {
       result: {
         schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
         safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+        safety_preference: "balanced", safety_preference_multiplier: 1,
         reference_risk_p95: 3.5, low_coverage_threshold: 0.8,
         risk_data_version: "risk-v9", formula_version: "formula-v1", matcher_version: "matcher-v1", graph_version: "graph-v1",
         included_year_start: 2020, included_year_end: 2023,
@@ -251,6 +257,7 @@ describe("PlanRoutePage", () => {
         vehicle_type: "car",
         avoid_tolls: false,
         avoid_highways: false,
+        safety_preference: "balanced",
         reference_risk_p95: 3.5,
         risk_data_version: "risk-v9",
       },
@@ -297,7 +304,8 @@ describe("PlanRoutePage", () => {
     const rerunId = "63ed1123-13ca-41d2-80b6-d5e5383ff12b";
     const result = {
       schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: false,
-      safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 }, reference_risk_p95: 2,
+      safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+      safety_preference: "balanced", safety_preference_multiplier: 1, reference_risk_p95: 2,
       low_coverage_threshold: 0.8, risk_data_version: "old-risk", formula_version: "old-formula", matcher_version: "old-matcher", graph_version: "old-graph",
       included_year_start: 2020, included_year_end: 2023, risk_metric_name: "historical_accident_density_per_km", risk_metric_description: "Historical risk proxy.",
       candidates: [{ candidate_index: 0, distance_m: 1000, duration_seconds: 120, matched_route_length_m: 1000, accident_score: 1, historical_accident_density_per_km: 1, coverage: 1, warning: null, time_penalty: 0, normalized_risk: 0.5, time_contribution: 0, safety_contribution: 0.2, final_cost: 0.2, geometry: { type: "LineString", coordinates: [[34.78, 32.07], [34.79, 32.08]] }, steps: [] }],

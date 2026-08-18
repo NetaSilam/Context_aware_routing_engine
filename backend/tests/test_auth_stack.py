@@ -62,6 +62,7 @@ def test_signup_normalizes_email_hashes_password_and_rejects_duplicate() -> None
         "vehicle_type": "motorcycle",
         "avoid_tolls": True,
         "avoid_highways": False,
+        "safety_preference": "balanced",
     }
     assert "password" not in response.text
     assert duplicate.status_code == 409
@@ -100,7 +101,7 @@ def test_login_profile_preference_update_origin_and_logout() -> None:
         rejected_update = client.patch("/api/auth/me", json={"vehicle_type": "truck"})
         updated = client.patch(
             "/api/auth/me",
-            json={"vehicle_type": "truck", "avoid_highways": True},
+            json={"vehicle_type": "truck", "avoid_highways": True, "safety_preference": "high"},
             headers={"Origin": ALLOWED_ORIGIN},
         )
         logout = client.post("/api/auth/logout", headers={"Origin": ALLOWED_ORIGIN})
@@ -113,6 +114,7 @@ def test_login_profile_preference_update_origin_and_logout() -> None:
     assert updated.status_code == 200
     assert updated.json()["vehicle_type"] == "truck"
     assert updated.json()["avoid_highways"] is True
+    assert updated.json()["safety_preference"] == "high"
     assert logout.status_code == 204
     assert "Max-Age=0" in logout.headers["set-cookie"]
     assert after_logout.status_code == 401

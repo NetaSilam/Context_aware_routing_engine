@@ -34,6 +34,7 @@ class UserScoringContextRequest(StrictModel):
     driving_experience: Literal["novice", "experienced"]
     vehicle_type: Literal["car", "motorcycle", "truck"]
     submitted_at: datetime
+    safety_preference: Literal["low", "balanced", "high"] = "balanced"
 
     @field_validator("submitted_at")
     @classmethod

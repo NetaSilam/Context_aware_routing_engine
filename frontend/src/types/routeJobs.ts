@@ -39,6 +39,8 @@ export interface RouteJobResult {
   safety_weight: number;
   time_weight: number;
   safety_factor_contributions: Record<string, number>;
+  safety_preference: "low" | "balanced" | "high";
+  safety_preference_multiplier: number;
   reference_risk_p95: number;
   low_coverage_threshold: number;
   risk_data_version: string;
@@ -56,6 +58,7 @@ export interface RerouteScoringContext {
   vehicle_type: "car" | "motorcycle" | "truck";
   avoid_tolls: boolean;
   avoid_highways: boolean;
+  safety_preference: "low" | "balanced" | "high";
   reference_risk_p95: number;
   risk_data_version: string;
 }
@@ -67,6 +70,8 @@ export interface RerouteResult {
   candidates: RouteCandidateResult[];
   safety_weight: number;
   time_weight: number;
+  safety_preference: "low" | "balanced" | "high";
+  safety_preference_multiplier: number;
   formula_version: string;
   risk_data_version: string;
 }

@@ -57,6 +57,7 @@ def reroute_payload(**overrides: object) -> dict[str, object]:
             "vehicle_type": "car",
             "avoid_tolls": False,
             "avoid_highways": False,
+            "safety_preference": "balanced",
             "reference_risk_p95": 10,
             "risk_data_version": "test-risk-v1",
         },

@@ -38,6 +38,7 @@ describe("RouteJobShell", () => {
     const result: RouteJobResult = {
       schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: false,
       safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+      safety_preference: "balanced", safety_preference_multiplier: 1,
       reference_risk_p95: 2, low_coverage_threshold: 0.8,
       risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1",
       graph_version: "graph-v1", included_year_start: 2020, included_year_end: 2023,
@@ -67,6 +68,7 @@ describe("RouteJobShell", () => {
     const result: RouteJobResult = {
       schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
       safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+      safety_preference: "balanced", safety_preference_multiplier: 1,
       reference_risk_p95: 2, low_coverage_threshold: 0.8,
       risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1",
       graph_version: "graph-v1", included_year_start: 2020, included_year_end: 2023,
@@ -115,6 +117,7 @@ describe("RouteJobShell", () => {
     const result: RouteJobResult = {
       schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: true,
       safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+      safety_preference: "balanced", safety_preference_multiplier: 1,
       reference_risk_p95: 2, low_coverage_threshold: 0.8,
       risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1",
       graph_version: "graph-v1", included_year_start: 2020, included_year_end: 2023,
@@ -158,6 +161,7 @@ describe("RouteJobShell", () => {
     const result: RouteJobResult = {
       schema_version: "route-result-v1", chosen_index: 0, risk_choice_available: false,
       safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+      safety_preference: "balanced", safety_preference_multiplier: 1,
       reference_risk_p95: 2, low_coverage_threshold: 0.8,
       risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1",
       graph_version: "graph-v1", included_year_start: 2020, included_year_end: 2023,
@@ -183,6 +187,7 @@ describe("RouteJobShell", () => {
     const result: RouteJobResult = {
       schema_version: "route-result-v1", chosen_index: 1, risk_choice_available: true,
       safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+      safety_preference: "balanced", safety_preference_multiplier: 1,
       reference_risk_p95: 2, low_coverage_threshold: 0.8,
       risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1",
       graph_version: "graph-v1", included_year_start: 2020, included_year_end: 2023,
@@ -224,6 +229,7 @@ describe("RouteJobShell", () => {
     const result: RouteJobResult = {
       schema_version: "route-result-v1", chosen_index: 1, risk_choice_available: true,
       safety_weight: 0.4, time_weight: 0.6, safety_factor_contributions: { base: 0.4 },
+      safety_preference: "balanced", safety_preference_multiplier: 1,
       reference_risk_p95: 2, low_coverage_threshold: 0.8,
       risk_data_version: "risk-v1", formula_version: "formula-v1", matcher_version: "matcher-v1",
       graph_version: "graph-v1", included_year_start: 2020, included_year_end: 2023,

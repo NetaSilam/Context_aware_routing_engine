@@ -347,6 +347,7 @@ async def create_route_job(
                     "vehicle_type": user["vehicle_type"],
                     "avoid_tolls": user["avoid_tolls"],
                     "avoid_highways": user["avoid_highways"],
+                    "safety_preference": user["safety_preference"],
                     "submitted_at": submitted_at.isoformat(),
                     "risk_data_version": risk_version["version"],
                     "reference_risk_p95": risk_version["reference_risk_p95"],

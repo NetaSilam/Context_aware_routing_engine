@@ -52,7 +52,7 @@ async def get_current_user(
 
     sql = text(
         """
-        SELECT id, email, driving_experience, vehicle_type, avoid_tolls, avoid_highways
+        SELECT id, email, driving_experience, vehicle_type, avoid_tolls, avoid_highways, safety_preference
         FROM app.users WHERE id = :user_id
         """
     )

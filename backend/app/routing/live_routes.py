@@ -27,6 +27,7 @@ from app.routing.region import validate_route_region
 from app.routing.route_scoring_service import (
     CandidateRouteMeasurement,
     DrivingExperience,
+    SafetyPreference,
     UserScoringContext,
     VehicleType,
     score_route_candidates,
@@ -49,6 +50,7 @@ class RerouteScoringContext(StrictRequest):
     vehicle_type: VehicleType
     avoid_tolls: bool
     avoid_highways: bool
+    safety_preference: SafetyPreference
     reference_risk_p95: float = Field(gt=0, allow_inf_nan=False)
     risk_data_version: str = Field(min_length=1, max_length=100)
 
@@ -254,6 +256,7 @@ def _compute_reroute(payload: RerouteRequest) -> dict[str, Any]:
             driving_experience=payload.scoring_context.driving_experience,
             vehicle_type=payload.scoring_context.vehicle_type,
             submitted_at=datetime.now(timezone.utc),
+            safety_preference=payload.scoring_context.safety_preference,
         ),
         reference_risk_p95=payload.scoring_context.reference_risk_p95,
         risk_data_version=payload.scoring_context.risk_data_version,
@@ -278,6 +281,8 @@ def _compute_reroute(payload: RerouteRequest) -> dict[str, Any]:
         "candidates": result_candidates,
         "safety_weight": scoring.safety_weight,
         "time_weight": scoring.time_weight,
+        "safety_preference": scoring.safety_preference,
+        "safety_preference_multiplier": scoring.safety_preference_multiplier,
         "formula_version": scoring.formula_version,
         "risk_data_version": scoring.risk_data_version,
     }
