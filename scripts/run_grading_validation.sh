@@ -4,7 +4,7 @@ set -euo pipefail
 base_project="road-risk-validation-${USER:-runner}-$$"
 services=(
   unit-tests frontend-tests foundation-tests risk-data-tests corridor-matcher-tests
-  osrm-contract-tests route-job-tests route-history-tests geocoding-tests auth-tests
+  osrm-contract-tests route-job-tests live-routes-tests route-history-tests geocoding-tests auth-tests
   forum-tests forum-security-tests forum-seed-tests messages-tests notifications-tests abuse-tests forum-abuse-tests
   llm-stack-tests llm-scheduling-tests llm-triage-tests llm-dedup-tests llm-route-explanation-tests llm-security-tests gateway-tests e2e-tests stress-tests
 )

@@ -22,8 +22,12 @@ ORIGIN = os.environ.get("AUTH_ALLOWED_ORIGIN", "http://localhost:5173")
 @pytest.fixture(autouse=True)
 def clear_reroute_rate_limits() -> None:
     client = redis.Redis.from_url(os.environ["REDIS_URL"])
-    for key in client.scan_iter("action-rate:route-reroute:*"):
-        client.delete(key)
+    # Also clear auth-rate keys: each test signs up its own user, and the shared
+    # SIGNUP_RATE_LIMIT is low enough that later tests in this file would otherwise
+    # get a spurious 429 from earlier tests' signups, not from anything under test.
+    for pattern in ("action-rate:route-reroute:*", "auth-rate:*"):
+        for key in client.scan_iter(pattern):
+            client.delete(key)
 
 
 def signup(client: httpx.Client, prefix: str) -> dict[str, object]:

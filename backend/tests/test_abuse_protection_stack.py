@@ -199,28 +199,33 @@ def test_invalid_and_oversized_work_never_reaches_queue_or_geocoder() -> None:
 
 def test_redis_outage_fails_closed_for_writes_but_keeps_bounded_history_read() -> None:
     _, cookie = signup("redis-outage")
+    # A genuinely unresolvable broker/Redis host (there's no such Compose service) costs a
+    # multi-second DNS lookup on its own in this environment, well before the app's own
+    # ~2s connection-timeout budget even starts — timeout=5 here left near-zero margin and
+    # made this test flaky independent of anything the app does. 15s gives real headroom
+    # without weakening the assertion, which is about the returned status/header, not speed.
     create = httpx.post(
         f"{UNAVAILABLE_API_URL}/api/route-jobs",
         cookies={"road_risk_session": cookie},
         headers={"Origin": ORIGIN, "Idempotency-Key": str(uuid4())},
         json=route_payload(),
-        timeout=5,
+        timeout=15,
     )
     poll = httpx.get(
         f"{UNAVAILABLE_API_URL}/api/route-jobs/{uuid4()}",
         cookies={"road_risk_session": cookie},
-        timeout=5,
+        timeout=15,
     )
     mutation = httpx.delete(
         f"{UNAVAILABLE_API_URL}/api/route-history/{uuid4()}",
         cookies={"road_risk_session": cookie},
         headers={"Origin": ORIGIN},
-        timeout=5,
+        timeout=15,
     )
     history = httpx.get(
         f"{UNAVAILABLE_API_URL}/api/route-history",
         cookies={"road_risk_session": cookie},
-        timeout=5,
+        timeout=15,
     )
     assert [create.status_code, poll.status_code, mutation.status_code] == [503, 503, 503]
     assert all(response.headers["retry-after"] == "5" for response in (create, poll, mutation))

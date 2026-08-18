@@ -55,7 +55,7 @@ def signup(prefix: str) -> tuple[dict[str, object], str]:
     return response.json(), response.cookies["road_risk_session"]
 
 
-def create_post(base_url: str, cookie: str, **overrides: object) -> httpx.Response:
+def create_post(base_url: str, cookie: str, *, timeout: float = 5, **overrides: object) -> httpx.Response:
     payload: dict[str, object] = {
         "title": "Deep pothole on Herzl",
         "body": "Careful, it's wide and deep near the crosswalk.",
@@ -68,37 +68,43 @@ def create_post(base_url: str, cookie: str, **overrides: object) -> httpx.Respon
         cookies={"road_risk_session": cookie},
         headers=MUTATE_HEADERS,
         json=payload,
-        timeout=5,
+        timeout=timeout,
     )
 
 
-def create_comment(base_url: str, cookie: str, post_id: str, body: str = "Still there today.") -> httpx.Response:
+def create_comment(
+    base_url: str, cookie: str, post_id: str, body: str = "Still there today.", *, timeout: float = 5
+) -> httpx.Response:
     return httpx.post(
         f"{base_url}/api/forum/posts/{post_id}/comments",
         cookies={"road_risk_session": cookie},
         headers=MUTATE_HEADERS,
         json={"body": body, "is_anonymous": False},
-        timeout=5,
+        timeout=timeout,
     )
 
 
-def vote_on_post(base_url: str, cookie: str, post_id: str, value: str = "up") -> httpx.Response:
+def vote_on_post(
+    base_url: str, cookie: str, post_id: str, value: str = "up", *, timeout: float = 5
+) -> httpx.Response:
     return httpx.put(
         f"{base_url}/api/forum/posts/{post_id}/vote",
         cookies={"road_risk_session": cookie},
         headers=MUTATE_HEADERS,
         json={"value": value},
-        timeout=5,
+        timeout=timeout,
     )
 
 
-def send_message(base_url: str, cookie: str, recipient_id: int, body: str = "hi there") -> httpx.Response:
+def send_message(
+    base_url: str, cookie: str, recipient_id: int, body: str = "hi there", *, timeout: float = 5
+) -> httpx.Response:
     return httpx.post(
         f"{base_url}/api/messages/{recipient_id}",
         cookies={"road_risk_session": cookie},
         headers=MUTATE_HEADERS,
         data={"body": body},
-        timeout=5,
+        timeout=timeout,
     )
 
 
@@ -147,17 +153,26 @@ def test_rapid_dm_sending_is_rate_limited() -> None:
     assert "retry-after" in limited.headers
 
 
+# geocoding-unavailable-api's own REDIS_URL points at a genuinely nonexistent host, so
+# every Redis-gated call here pays for real DNS resolution of that host (a multi-second
+# cost in this environment on its own) before the app can fail closed. timeout=5 left
+# near-zero margin and made these flaky independent of anything the app does; 15s gives
+# real headroom without weakening the assertions, which are about the returned
+# status/header, not speed.
+OUTAGE_TIMEOUT = 15
+
+
 def test_redis_outage_fails_closed_for_forum_writes_but_keeps_feed_readable() -> None:
     _, cookie = signup("outage-writer")
 
-    post = create_post(UNAVAILABLE_API_URL, cookie)
+    post = create_post(UNAVAILABLE_API_URL, cookie, timeout=OUTAGE_TIMEOUT)
     assert post.status_code == 503, post.text
     assert post.headers["retry-after"] == "5"
 
     feed = httpx.get(
         f"{UNAVAILABLE_API_URL}/api/forum/posts",
         cookies={"road_risk_session": cookie},
-        timeout=5,
+        timeout=OUTAGE_TIMEOUT,
     )
     assert feed.status_code == 200
 
@@ -171,18 +186,18 @@ def test_redis_outage_fails_closed_for_comments_and_votes() -> None:
     assert post.status_code == 201, post.text
     post_id = post.json()["id"]
 
-    comment = create_comment(UNAVAILABLE_API_URL, cookie, post_id)
+    comment = create_comment(UNAVAILABLE_API_URL, cookie, post_id, timeout=OUTAGE_TIMEOUT)
     assert comment.status_code == 503, comment.text
     assert comment.headers["retry-after"] == "5"
 
-    vote = vote_on_post(UNAVAILABLE_API_URL, cookie, post_id)
+    vote = vote_on_post(UNAVAILABLE_API_URL, cookie, post_id, timeout=OUTAGE_TIMEOUT)
     assert vote.status_code == 503, vote.text
     assert vote.headers["retry-after"] == "5"
 
     post_detail = httpx.get(
         f"{UNAVAILABLE_API_URL}/api/forum/posts/{post_id}",
         cookies={"road_risk_session": cookie},
-        timeout=5,
+        timeout=OUTAGE_TIMEOUT,
     )
     assert post_detail.status_code == 200
 
@@ -191,21 +206,21 @@ def test_redis_outage_fails_closed_for_dm_send_but_keeps_conversation_readable()
     sender, sender_cookie = signup("outage-dm-sender")
     recipient, recipient_cookie = signup("outage-dm-recipient")
 
-    sent = send_message(UNAVAILABLE_API_URL, sender_cookie, recipient["id"])
+    sent = send_message(UNAVAILABLE_API_URL, sender_cookie, recipient["id"], timeout=OUTAGE_TIMEOUT)
     assert sent.status_code == 503, sent.text
     assert sent.headers["retry-after"] == "5"
 
     conversation = httpx.get(
         f"{UNAVAILABLE_API_URL}/api/messages/{sender['id']}",
         cookies={"road_risk_session": recipient_cookie},
-        timeout=5,
+        timeout=OUTAGE_TIMEOUT,
     )
     assert conversation.status_code == 200
 
     conversations = httpx.get(
         f"{UNAVAILABLE_API_URL}/api/messages",
         cookies={"road_risk_session": sender_cookie},
-        timeout=5,
+        timeout=OUTAGE_TIMEOUT,
     )
     assert conversations.status_code == 200
 
