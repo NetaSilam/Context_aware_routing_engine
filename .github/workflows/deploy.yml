@@ -66,11 +66,15 @@ jobs:
 
       - name: Verify the site is healthy
         run: |
+          # curl's own connection-failure exit code (e.g. "Connection refused" while the
+          # frontend container is still starting) would otherwise abort this whole script
+          # immediately under bash -e, defeating the retry loop below. `|| echo 000` turns
+          # a failed connection into a plain non-200 code so the loop just retries instead.
           for i in $(seq 1 20); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.VM_HOST }}/")
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.VM_HOST }}/" || echo 000)
             if [ "$code" = "200" ]; then
               echo "Frontend is up (HTTP $code)"
-              api_code=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.VM_HOST }}/api/auth/me")
+              api_code=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.VM_HOST }}/api/auth/me" || echo 000)
               if [ "$api_code" = "401" ]; then
                 echo "API proxy is responding correctly (HTTP $api_code)"
                 exit 0
