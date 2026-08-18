@@ -34,7 +34,7 @@ const post = {
   llm_hazard_type_suggested: null,
   llm_severity: null,
   duplicate_of_post_id: null,
-  has_media: false,
+  thumbnail_media_id: null,
 };
 
 function baseFetchMock(): ReturnType<typeof vi.fn> {
@@ -64,15 +64,15 @@ describe("ForumPage", () => {
     // own "AI-classified severity" feature chip also contains the word "severity".
     expect(container.querySelector(".forum-feed__severity")).toBeNull();
     expect(container.querySelector(".forum-feed__duplicate")).toBeNull();
-    expect(container.querySelector(".forum-feed__media-badge")).toBeNull();
+    expect(container.querySelector(".forum-feed__thumbnail")).toBeNull();
   });
 
-  it("shows a photo badge on feed items that have media, and hides it otherwise", async () => {
+  it("shows a photo thumbnail on feed items that have media, and hides it otherwise", async () => {
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.startsWith("/api/forum/posts?")) {
         return Promise.resolve(jsonResponse({
-          items: [{ ...post, has_media: true }],
+          items: [{ ...post, thumbnail_media_id: "22222222-2222-2222-2222-222222222222" }],
           offset: 0,
           limit: 20,
           has_more: false,
@@ -87,7 +87,9 @@ describe("ForumPage", () => {
     const { container } = render(<ForumPage />);
 
     expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
-    expect(container.querySelector(".forum-feed__media-badge")).toBeTruthy();
+    const thumbnail = container.querySelector(".forum-feed__thumbnail") as HTMLImageElement | null;
+    expect(thumbnail).toBeTruthy();
+    expect(thumbnail?.src).toContain("/api/forum/media/22222222-2222-2222-2222-222222222222");
   });
 
   it("shows the LLM-suggested severity once classification has completed", async () => {
@@ -268,6 +270,10 @@ describe("ForumPage", () => {
     ));
     const mediaCall = fetchMock.mock.calls.find(([url]) => String(url) === `/api/forum/posts/${createdId}/media`);
     expect(mediaCall?.[1]?.body).toBeInstanceOf(FormData);
+
+    const thumbnail = (await screen.findByRole("button", { name: "Open report: Flooded underpass" }))
+      .querySelector("img.forum-feed__thumbnail") as HTMLImageElement | null;
+    expect(thumbnail?.src).toContain("/api/forum/media/55555555-5555-5555-5555-555555555555");
   });
 
   it("optimistically applies a vote and calls the vote endpoint", async () => {

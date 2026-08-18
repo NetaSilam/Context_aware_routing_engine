@@ -54,7 +54,7 @@ def _post_row(**overrides: object) -> dict:
         "llm_hazard_type_suggested": None,
         "llm_severity": None,
         "duplicate_of_post_id": None,
-        "has_media": False,
+        "thumbnail_media_id": None,
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
         "my_vote_value": None,
@@ -114,16 +114,19 @@ def test_serialize_post_includes_llm_classification_fields() -> None:
     assert classified["duplicate_of_post_id"] == duplicate_id
 
 
-def test_serialize_post_derives_has_media_from_the_row_column_or_the_media_list() -> None:
-    # List-style rows (no media= passed) rely on the SQL query's own has_media column.
-    assert _serialize_post(_post_row(has_media=False), viewer_id=1)["has_media"] is False
-    assert _serialize_post(_post_row(has_media=True), viewer_id=1)["has_media"] is True
+def test_serialize_post_derives_thumbnail_media_id_from_the_row_or_the_media_list() -> None:
+    # List-style rows (no media= passed) rely on the SQL query's own thumbnail_media_id column.
+    assert _serialize_post(_post_row(thumbnail_media_id=None), viewer_id=1)["thumbnail_media_id"] is None
+    media_id = uuid4()
+    assert _serialize_post(_post_row(thumbnail_media_id=media_id), viewer_id=1)["thumbnail_media_id"] == media_id
 
-    # Detail-style calls (media= passed) derive it from the fetched media list instead,
-    # regardless of whatever the row itself happens to carry.
-    row = _post_row(has_media=False)
-    assert _serialize_post(row, viewer_id=1, media=[])["has_media"] is False
-    assert _serialize_post(row, viewer_id=1, media=[{"id": uuid4()}])["has_media"] is True
+    # Detail-style calls (media= passed) derive it from the fetched media list's first item
+    # instead, regardless of whatever the row itself happens to carry.
+    row = _post_row(thumbnail_media_id=None)
+    assert _serialize_post(row, viewer_id=1, media=[])["thumbnail_media_id"] is None
+    first_media_id = uuid4()
+    media = [{"id": first_media_id}, {"id": uuid4()}]
+    assert _serialize_post(row, viewer_id=1, media=media)["thumbnail_media_id"] == first_media_id
 
 
 def test_serialize_comment_hides_author_identity_when_anonymous() -> None:

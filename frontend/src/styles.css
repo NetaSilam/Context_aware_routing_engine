@@ -888,10 +888,35 @@ input[readonly] {
 }
 
 .forum-feed__item {
+  display: flex;
+  gap: 12px;
   border: 1px solid var(--color-border);
   border-radius: 16px;
   padding: 14px 16px;
   background: #fbfbfa;
+}
+
+.forum-feed__item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.forum-feed__thumbnail-button {
+  flex: none;
+  border: none;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.forum-feed__thumbnail {
+  display: block;
+  width: 88px;
+  height: 88px;
+  object-fit: cover;
+  border-radius: 12px;
 }
 
 .forum-feed__title {
@@ -903,11 +928,6 @@ input[readonly] {
   color: #0a5466;
   cursor: pointer;
   text-align: left;
-}
-
-.forum-feed__media-badge {
-  margin-left: 6px;
-  font-size: 0.9rem;
 }
 
 .forum-feed__meta {

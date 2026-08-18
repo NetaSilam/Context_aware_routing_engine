@@ -1,3 +1,4 @@
+import { mediaUrl } from "../../api/forum";
 import { HAZARD_TYPE_LABELS, HAZARD_TYPES, SEVERITY_LABELS } from "../../types/forum";
 import type { HazardType, PostSummary } from "../../types/forum";
 import VoteButtons from "./VoteButtons";
@@ -47,46 +48,57 @@ export default function PostList(props: PostListProps): JSX.Element {
       <ul className="forum-feed__list">
         {props.items.map((post) => (
           <li key={post.id} className="forum-feed__item">
-            <button type="button" className="forum-feed__title" onClick={() => props.onOpen(post.id)}>
-              {post.title}
-              {post.has_media ? (
-                <span className="forum-feed__media-badge" title="This report includes a photo or video">
-                  📷
-                </span>
+            {post.thumbnail_media_id ? (
+              <button
+                type="button"
+                className="forum-feed__thumbnail-button"
+                onClick={() => props.onOpen(post.id)}
+                aria-label={`Open report: ${post.title}`}
+              >
+                <img
+                  className="forum-feed__thumbnail"
+                  src={mediaUrl(post.thumbnail_media_id)}
+                  alt=""
+                />
+              </button>
+            ) : null}
+            <div className="forum-feed__item-body">
+              <button type="button" className="forum-feed__title" onClick={() => props.onOpen(post.id)}>
+                {post.title}
+              </button>
+              <p className="forum-feed__meta">
+                {HAZARD_TYPE_LABELS[post.hazard_type]} ·{" "}
+                {post.is_anonymous
+                  ? post.is_own
+                    ? "Anonymous (you)"
+                    : "Anonymous"
+                  : post.author_email}{" "}
+                · {post.comment_count} comment{post.comment_count === 1 ? "" : "s"} ·{" "}
+                {new Date(post.created_at).toLocaleString()}
+              </p>
+              {post.llm_severity ? (
+                <p
+                  className="forum-feed__severity"
+                  title="AI-estimated urgency, based on the report's own text — not verified by a person."
+                >
+                  🤖 AI: {SEVERITY_LABELS[post.llm_severity]}
+                </p>
               ) : null}
-            </button>
-            <p className="forum-feed__meta">
-              {HAZARD_TYPE_LABELS[post.hazard_type]} ·{" "}
-              {post.is_anonymous
-                ? post.is_own
-                  ? "Anonymous (you)"
-                  : "Anonymous"
-                : post.author_email}{" "}
-              · {post.comment_count} comment{post.comment_count === 1 ? "" : "s"} ·{" "}
-              {new Date(post.created_at).toLocaleString()}
-            </p>
-            {post.llm_severity ? (
-              <p
-                className="forum-feed__severity"
-                title="AI-estimated urgency, based on the report's own text — not verified by a person."
-              >
-                🤖 AI: {SEVERITY_LABELS[post.llm_severity]}
-              </p>
-            ) : null}
-            {post.duplicate_of_post_id ? (
-              <p
-                className="forum-feed__duplicate"
-                title="AI-detected: this report's text looks similar to a nearby report of the same hazard type."
-              >
-                🤖 AI: possible duplicate of report {post.duplicate_of_post_id}
-              </p>
-            ) : null}
-            <VoteButtons
-              upvoteCount={post.upvote_count}
-              downvoteCount={post.downvote_count}
-              myVote={post.my_vote}
-              onVote={(value) => props.onVote(post.id, value)}
-            />
+              {post.duplicate_of_post_id ? (
+                <p
+                  className="forum-feed__duplicate"
+                  title="AI-detected: this report's text looks similar to a nearby report of the same hazard type."
+                >
+                  🤖 AI: possible duplicate of report {post.duplicate_of_post_id}
+                </p>
+              ) : null}
+              <VoteButtons
+                upvoteCount={post.upvote_count}
+                downvoteCount={post.downvote_count}
+                myVote={post.my_vote}
+                onVote={(value) => props.onVote(post.id, value)}
+              />
+            </div>
           </li>
         ))}
       </ul>

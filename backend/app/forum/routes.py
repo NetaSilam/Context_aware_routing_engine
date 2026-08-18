@@ -93,7 +93,7 @@ class PostSummary(BaseModel):
     llm_hazard_type_suggested: str | None
     llm_severity: str | None
     duplicate_of_post_id: UUID | None
-    has_media: bool
+    thumbnail_media_id: UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -176,8 +176,8 @@ def _serialize_post(row: Any, viewer_id: int, *, media: list[Any] | None = None)
         "llm_severity": row["llm_severity"],
         "duplicate_of_post_id": row["duplicate_of_post_id"],
         # When the caller already fetched full media (detail views), derive it from that
-        # rather than requiring every list query to also carry a has_media column.
-        "has_media": bool(media) if media is not None else bool(row["has_media"]),
+        # rather than requiring every list query to also carry a thumbnail_media_id column.
+        "thumbnail_media_id": (media[0]["id"] if media else None) if media is not None else row["thumbnail_media_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -344,9 +344,11 @@ async def list_posts(
                                p.upvote_count, p.downvote_count, p.comment_count,
                                p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
                                p.created_at, p.updated_at, v.value AS my_vote_value,
-                               EXISTS (
-                                   SELECT 1 FROM app.forum_post_media m WHERE m.post_id = p.id
-                               ) AS has_media
+                               (
+                                   SELECT m.id FROM app.forum_post_media m
+                                   WHERE m.post_id = p.id
+                                   ORDER BY m.created_at ASC LIMIT 1
+                               ) AS thumbnail_media_id
                         FROM app.forum_posts p
                         JOIN app.users u ON u.id = p.author_user_id
                         LEFT JOIN app.forum_votes v
@@ -413,9 +415,11 @@ async def list_posts_nearby(
                                p.upvote_count, p.downvote_count, p.comment_count,
                                p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
                                p.created_at, p.updated_at, v.value AS my_vote_value,
-                               EXISTS (
-                                   SELECT 1 FROM app.forum_post_media m WHERE m.post_id = p.id
-                               ) AS has_media
+                               (
+                                   SELECT m.id FROM app.forum_post_media m
+                                   WHERE m.post_id = p.id
+                                   ORDER BY m.created_at ASC LIMIT 1
+                               ) AS thumbnail_media_id
                         FROM app.forum_posts p
                         JOIN app.users u ON u.id = p.author_user_id
                         LEFT JOIN app.forum_votes v

@@ -109,8 +109,10 @@ export default function ForumPage(): JSX.Element {
 
   async function handleCreatePost(payload: Parameters<typeof createPost>[0], files: File[]) {
     const created = await createPost(payload);
+    let thumbnailMediaId: string | null = null;
     for (const file of files) {
-      await uploadPostMedia(created.id, file);
+      const uploaded = await uploadPostMedia(created.id, file);
+      thumbnailMediaId ??= uploaded.id;
     }
     setPosts((current) => [
       {
@@ -134,7 +136,7 @@ export default function ForumPage(): JSX.Element {
         duplicate_of_post_id: created.duplicate_of_post_id,
         // `created` reflects the post before this submission's media finished uploading
         // (the upload loop above already ran by this point), so derive it from that instead.
-        has_media: files.length > 0,
+        thumbnail_media_id: thumbnailMediaId,
       },
       ...current,
     ]);

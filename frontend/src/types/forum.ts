@@ -39,7 +39,7 @@ export interface PostSummary {
   llm_hazard_type_suggested: HazardType | null;
   llm_severity: Severity | null;
   duplicate_of_post_id: string | null;
-  has_media: boolean;
+  thumbnail_media_id: string | null;
 }
 
 export interface PostDetail extends PostSummary {

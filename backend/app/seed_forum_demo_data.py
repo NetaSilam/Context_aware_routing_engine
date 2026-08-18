@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-import struct
-import zlib
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 import psycopg
@@ -18,24 +17,11 @@ from app.initialize_foundation import synchronous_database_url
 _SEED_NAMESPACE = uuid5(NAMESPACE_URL, "https://sa-bracha.example/forum-seed")
 _SEED_PASSWORD_HASH = hash_password("seed-accounts-never-log-in")
 _NOW = datetime.now(timezone.utc)
+_SEED_MEDIA_DIR = Path(__file__).parent / "forum" / "seed_media"
 
 
 def _seed_uuid(key: str) -> UUID:
     return uuid5(_SEED_NAMESPACE, key)
-
-
-def _solid_color_png(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
-    """A minimal, dependency-free solid-color PNG, used as a stand-in demo photo — the
-    seed script otherwise has no source of real hazard photography to attach."""
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
-
-    signature = b"\x89PNG\r\n\x1a\n"
-    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    row = bytes([0]) + bytes(rgb) * width
-    idat = zlib.compress(row * height, 9)
-    return signature + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b"")
 
 
 def _days_ago(days: float) -> datetime:
@@ -143,16 +129,18 @@ SEED_COMMENTS: list[dict[str, object]] = [
     {"key": "seed-comment-11", "post_key": "seed-post-other-1", "author_key": "seed-user-5", "is_anonymous": False, "days_ago": 19, "body": "Mostly swept away by the wind, minor now."},
 ]
 
-# One demo photo (a solid-color placeholder, see _solid_color_png) on most posts, so the
-# feed reads as a populated, photo-driven forum rather than text-only rows.
+# One real, permissively-licensed demo photo (see seed_media/CREDITS.md for source/license/
+# attribution) on most posts, so the feed reads as a populated, photo-driven forum rather than
+# text-only rows. Real Wikimedia Commons photos, not solid-color placeholders — the first
+# version of this seed used generated placeholder images, which looked uninformative.
 SEED_POST_MEDIA: list[dict[str, object]] = [
-    {"key": "seed-media-pothole-1", "post_key": "seed-post-pothole-1", "color": (96, 92, 88)},
-    {"key": "seed-media-pothole-2", "post_key": "seed-post-pothole-2", "color": (104, 98, 84)},
-    {"key": "seed-media-flooding-1", "post_key": "seed-post-flooding-1", "color": (66, 108, 148)},
-    {"key": "seed-media-broken-signal-1", "post_key": "seed-post-broken-signal-1", "color": (176, 62, 48)},
-    {"key": "seed-media-poor-lighting-1", "post_key": "seed-post-poor-lighting-1", "color": (40, 42, 58)},
-    {"key": "seed-media-speed-bump-1", "post_key": "seed-post-speed-bump-1", "color": (70, 70, 72)},
-    {"key": "seed-media-crash-1", "post_key": "seed-post-crash-1", "color": (150, 42, 40)},
+    {"key": "seed-media-pothole-1", "post_key": "seed-post-pothole-1", "file": "pothole-1.jpg"},
+    {"key": "seed-media-pothole-2", "post_key": "seed-post-pothole-2", "file": "pothole-2.jpg"},
+    {"key": "seed-media-flooding-1", "post_key": "seed-post-flooding-1", "file": "flooding-1.jpg"},
+    {"key": "seed-media-broken-signal-1", "post_key": "seed-post-broken-signal-1", "file": "broken-signal-1.jpg"},
+    {"key": "seed-media-poor-lighting-1", "post_key": "seed-post-poor-lighting-1", "file": "poor-lighting-1.jpg"},
+    {"key": "seed-media-speed-bump-1", "post_key": "seed-post-speed-bump-1", "file": "speed-bump-1.jpg"},
+    {"key": "seed-media-crash-1", "post_key": "seed-post-crash-1", "file": "crash-1.jpg"},
 ]
 
 # A handful of up/down votes; never the author voting on their own content.
@@ -229,28 +217,31 @@ def _seed_posts(connection: psycopg.Connection[dict], user_ids: dict[str, int]) 
 
 
 def _seed_post_media(connection: psycopg.Connection[dict], post_ids: dict[str, UUID]) -> int:
-    """Writes each demo image to disk and inserts its row, but only the first time — unlike
-    posts/comments' plain INSERT ... ON CONFLICT DO NOTHING, this must check for the row
-    before writing the file too, since re-running would otherwise leak an orphaned file on
-    every container restart even though the (idempotent) DB insert itself would no-op."""
+    """Writes each demo image to disk and (re)inserts its row every run — unlike posts/
+    comments' plain INSERT ... ON CONFLICT DO NOTHING, this replaces whatever was there before
+    rather than skipping when the row already exists, so swapping SEED_POST_MEDIA's image (as
+    happened once already, replacing generated placeholders with real photos) actually takes
+    effect on existing databases instead of leaving the old file in place forever. The stale
+    row's own file is deleted first so replaced images don't leak on the persistent volume."""
     settings = get_settings()
     seeded = 0
     for media in SEED_POST_MEDIA:
         media_id = _seed_uuid(str(media["key"]))
-        already_seeded = connection.execute(
-            "SELECT 1 FROM app.forum_post_media WHERE id = %s", (media_id,)
+        stale = connection.execute(
+            "SELECT storage_key FROM app.forum_post_media WHERE id = %s", (media_id,)
         ).fetchone()
-        if already_seeded is not None:
-            continue
-        png_bytes = _solid_color_png(640, 400, media["color"])  # type: ignore[arg-type]
-        storage_key = write_media_file(settings, png_bytes)
+        if stale is not None:
+            connection.execute("DELETE FROM app.forum_post_media WHERE id = %s", (media_id,))
+            (settings.forum_media_storage_path / stale["storage_key"]).unlink(missing_ok=True)
+        image_bytes = (_SEED_MEDIA_DIR / str(media["file"])).read_bytes()
+        storage_key = write_media_file(settings, image_bytes)
         connection.execute(
             """
             INSERT INTO app.forum_post_media
                 (id, post_id, media_type, storage_key, content_type, byte_size)
-            VALUES (%s, %s, 'image', %s, 'image/png', %s)
+            VALUES (%s, %s, 'image', %s, 'image/jpeg', %s)
             """,
-            (media_id, post_ids[str(media["post_key"])], storage_key, len(png_bytes)),
+            (media_id, post_ids[str(media["post_key"])], storage_key, len(image_bytes)),
         )
         seeded += 1
     return seeded
