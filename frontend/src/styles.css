@@ -905,6 +905,11 @@ input[readonly] {
   text-align: left;
 }
 
+.forum-feed__media-badge {
+  margin-left: 6px;
+  font-size: 0.9rem;
+}
+
 .forum-feed__meta {
   color: #617178;
   font-size: 0.88rem;

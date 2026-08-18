@@ -49,6 +49,11 @@ export default function PostList(props: PostListProps): JSX.Element {
           <li key={post.id} className="forum-feed__item">
             <button type="button" className="forum-feed__title" onClick={() => props.onOpen(post.id)}>
               {post.title}
+              {post.has_media ? (
+                <span className="forum-feed__media-badge" title="This report includes a photo or video">
+                  📷
+                </span>
+              ) : null}
             </button>
             <p className="forum-feed__meta">
               {HAZARD_TYPE_LABELS[post.hazard_type]} ·{" "}

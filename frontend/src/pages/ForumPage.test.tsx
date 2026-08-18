@@ -34,6 +34,7 @@ const post = {
   llm_hazard_type_suggested: null,
   llm_severity: null,
   duplicate_of_post_id: null,
+  has_media: false,
 };
 
 function baseFetchMock(): ReturnType<typeof vi.fn> {
@@ -63,6 +64,30 @@ describe("ForumPage", () => {
     // own "AI-classified severity" feature chip also contains the word "severity".
     expect(container.querySelector(".forum-feed__severity")).toBeNull();
     expect(container.querySelector(".forum-feed__duplicate")).toBeNull();
+    expect(container.querySelector(".forum-feed__media-badge")).toBeNull();
+  });
+
+  it("shows a photo badge on feed items that have media, and hides it otherwise", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith("/api/forum/posts?")) {
+        return Promise.resolve(jsonResponse({
+          items: [{ ...post, has_media: true }],
+          offset: 0,
+          limit: 20,
+          has_more: false,
+        }));
+      }
+      if (url === "/api/forum/me/dashboard") {
+        return Promise.resolve(jsonResponse(dashboard));
+      }
+      return Promise.resolve(jsonResponse({ detail: `unhandled ${url}` }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(<ForumPage />);
+
+    expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
+    expect(container.querySelector(".forum-feed__media-badge")).toBeTruthy();
   });
 
   it("shows the LLM-suggested severity once classification has completed", async () => {

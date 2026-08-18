@@ -132,6 +132,9 @@ export default function ForumPage(): JSX.Element {
         llm_hazard_type_suggested: created.llm_hazard_type_suggested,
         llm_severity: created.llm_severity,
         duplicate_of_post_id: created.duplicate_of_post_id,
+        // `created` reflects the post before this submission's media finished uploading
+        // (the upload loop above already ran by this point), so derive it from that instead.
+        has_media: files.length > 0,
       },
       ...current,
     ]);

@@ -93,6 +93,7 @@ class PostSummary(BaseModel):
     llm_hazard_type_suggested: str | None
     llm_severity: str | None
     duplicate_of_post_id: UUID | None
+    has_media: bool
     created_at: datetime
     updated_at: datetime
 
@@ -174,6 +175,9 @@ def _serialize_post(row: Any, viewer_id: int, *, media: list[Any] | None = None)
         "llm_hazard_type_suggested": row["llm_hazard_type_suggested"],
         "llm_severity": row["llm_severity"],
         "duplicate_of_post_id": row["duplicate_of_post_id"],
+        # When the caller already fetched full media (detail views), derive it from that
+        # rather than requiring every list query to also carry a has_media column.
+        "has_media": bool(media) if media is not None else bool(row["has_media"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -315,7 +319,7 @@ async def create_post(
             # rather than ever running; classification is enrichment, not load-bearing.
             pass
     return _serialize_post(
-        {**row, "author_email": user["email"], "my_vote_value": None}, int(user["id"])
+        {**row, "author_email": user["email"], "my_vote_value": None}, int(user["id"]), media=[]
     )
 
 
@@ -339,7 +343,10 @@ async def list_posts(
                                p.hazard_type, p.title, p.longitude, p.latitude,
                                p.upvote_count, p.downvote_count, p.comment_count,
                                p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
-                               p.created_at, p.updated_at, v.value AS my_vote_value
+                               p.created_at, p.updated_at, v.value AS my_vote_value,
+                               EXISTS (
+                                   SELECT 1 FROM app.forum_post_media m WHERE m.post_id = p.id
+                               ) AS has_media
                         FROM app.forum_posts p
                         JOIN app.users u ON u.id = p.author_user_id
                         LEFT JOIN app.forum_votes v
@@ -405,7 +412,10 @@ async def list_posts_nearby(
                                p.hazard_type, p.title, p.longitude, p.latitude,
                                p.upvote_count, p.downvote_count, p.comment_count,
                                p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
-                               p.created_at, p.updated_at, v.value AS my_vote_value
+                               p.created_at, p.updated_at, v.value AS my_vote_value,
+                               EXISTS (
+                                   SELECT 1 FROM app.forum_post_media m WHERE m.post_id = p.id
+                               ) AS has_media
                         FROM app.forum_posts p
                         JOIN app.users u ON u.id = p.author_user_id
                         LEFT JOIN app.forum_votes v

@@ -54,6 +54,7 @@ def _post_row(**overrides: object) -> dict:
         "llm_hazard_type_suggested": None,
         "llm_severity": None,
         "duplicate_of_post_id": None,
+        "has_media": False,
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
         "my_vote_value": None,
@@ -111,6 +112,18 @@ def test_serialize_post_includes_llm_classification_fields() -> None:
     assert classified["llm_hazard_type_suggested"] == "flooding"
     assert classified["llm_severity"] == "high"
     assert classified["duplicate_of_post_id"] == duplicate_id
+
+
+def test_serialize_post_derives_has_media_from_the_row_column_or_the_media_list() -> None:
+    # List-style rows (no media= passed) rely on the SQL query's own has_media column.
+    assert _serialize_post(_post_row(has_media=False), viewer_id=1)["has_media"] is False
+    assert _serialize_post(_post_row(has_media=True), viewer_id=1)["has_media"] is True
+
+    # Detail-style calls (media= passed) derive it from the fetched media list instead,
+    # regardless of whatever the row itself happens to carry.
+    row = _post_row(has_media=False)
+    assert _serialize_post(row, viewer_id=1, media=[])["has_media"] is False
+    assert _serialize_post(row, viewer_id=1, media=[{"id": uuid4()}])["has_media"] is True
 
 
 def test_serialize_comment_hides_author_identity_when_anonymous() -> None:
