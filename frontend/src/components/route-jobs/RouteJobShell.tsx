@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { MapContainer, Polyline, TileLayer } from "react-leaflet";
 
-import type { RouteJobResult } from "../../types/routeJobs";
+import type { RouteCandidateResult, RouteJobResult } from "../../types/routeJobs";
 
 export type RouteJobShellStatus = "empty" | "submitting" | "polling" | "completed" | "failed";
 
@@ -10,6 +10,7 @@ interface RouteJobShellProps {
   error?: string;
   result?: RouteJobResult | null;
   llmExplanation?: string | null;
+  onStartNavigation?: (candidate: RouteCandidateResult) => void;
 }
 
 const STATE_CONTENT: Record<RouteJobShellStatus, { heading: string; description: string }> = {
@@ -24,7 +25,15 @@ function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function RouteResult({ result, llmExplanation }: { result: RouteJobResult; llmExplanation?: string | null }): JSX.Element {
+function RouteResult({
+  result,
+  llmExplanation,
+  onStartNavigation,
+}: {
+  result: RouteJobResult;
+  llmExplanation?: string | null;
+  onStartNavigation?: (candidate: RouteCandidateResult) => void;
+}): JSX.Element {
   const [selectedIndex, setSelectedIndex] = useState(result.chosen_index);
   const chosen = result.candidates.find((candidate) => candidate.candidate_index === result.chosen_index) ?? result.candidates[0];
   const highlighted = result.candidates.find((candidate) => candidate.candidate_index === selectedIndex) ?? chosen;
@@ -37,6 +46,16 @@ function RouteResult({ result, llmExplanation }: { result: RouteJobResult; llmEx
     <div className="route-result">
       {hasLowCoverage ? <p role="alert" className="error-banner">Some routes have incomplete historical corridor coverage. Their risk comparison is less reliable.</p> : null}
       {!result.risk_choice_available ? <p><strong>Only one route was available.</strong> No risk-aware choice between alternatives was possible.</p> : null}
+      {onStartNavigation ? (
+        <button
+          type="button"
+          className="primary-button start-navigation-button"
+          onClick={() => onStartNavigation(highlighted)}
+        >
+          Start navigation — Route {highlighted.candidate_index + 1}
+          {highlighted.candidate_index === result.chosen_index ? " (recommended)" : ""}
+        </button>
+      ) : null}
       {llmExplanation ? (
         <div className="route-explanation">
           <p className="route-explanation__heading">
@@ -105,7 +124,7 @@ function RouteResult({ result, llmExplanation }: { result: RouteJobResult; llmEx
   );
 }
 
-export default function RouteJobShell({ status, error, result, llmExplanation }: RouteJobShellProps): JSX.Element {
+export default function RouteJobShell({ status, error, result, llmExplanation, onStartNavigation }: RouteJobShellProps): JSX.Element {
   const content = STATE_CONTENT[status];
   return (
     <section className="filters-panel" aria-label="Route job" data-route-job-state={status}>
@@ -114,7 +133,9 @@ export default function RouteJobShell({ status, error, result, llmExplanation }:
         <h2>{content.heading}</h2>
         <p>{status === "failed" && error ? error : content.description}</p>
       </div>
-      {status === "completed" && result ? <RouteResult result={result} llmExplanation={llmExplanation} /> : null}
+      {status === "completed" && result ? (
+        <RouteResult result={result} llmExplanation={llmExplanation} onStartNavigation={onStartNavigation} />
+      ) : null}
     </section>
   );
 }

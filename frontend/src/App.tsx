@@ -9,8 +9,11 @@ import AccidentAttributionPage from "./pages/AccidentAttributionPage";
 import CanonicalNetworkPage from "./pages/CanonicalNetworkPage";
 import ForumPage from "./pages/ForumPage";
 import InboxPage from "./pages/InboxPage";
+import NavigatePage from "./pages/NavigatePage";
 import PlanRoutePage from "./pages/PlanRoutePage";
 import type { UserProfile } from "./types/auth";
+import type { NavigationHandoff } from "./types/navigation";
+import { clearNavigationSession, loadNavigationSession, saveNavigationSession } from "./lib/navigationSession";
 
 export interface AppProps {
   initialPage?: AppPageId;
@@ -18,8 +21,27 @@ export interface AppProps {
 }
 
 export default function App(props: AppProps): JSX.Element {
-  const [activePage, setActivePage] = React.useState<AppPageId>(props.initialPage ?? "plan-route");
+  // A refresh, crash, or backgrounded tab mid-drive shouldn't force restarting route
+  // planning from scratch, so an in-progress navigation session resumes from sessionStorage.
+  const [activePage, setActivePage] = React.useState<AppPageId>(
+    () => props.initialPage ?? (loadNavigationSession() ? "navigate" : "plan-route"),
+  );
   const [user, setUser] = React.useState<UserProfile | null | undefined>(undefined);
+  const [navigationHandoff, setNavigationHandoff] = React.useState<NavigationHandoff | null>(
+    () => loadNavigationSession()?.handoff ?? null,
+  );
+
+  function startNavigation(handoff: NavigationHandoff) {
+    setNavigationHandoff(handoff);
+    saveNavigationSession({ handoff, candidate: handoff.candidate, stepIndex: 0 });
+    setActivePage("navigate");
+  }
+
+  function exitNavigation() {
+    setNavigationHandoff(null);
+    clearNavigationSession();
+    setActivePage("plan-route");
+  }
 
   React.useEffect(() => {
     let cancelled = false;
@@ -51,11 +73,20 @@ export default function App(props: AppProps): JSX.Element {
   }
 
   const pages: Record<AppPageId, JSX.Element> = {
-    "plan-route": props.pages?.["plan-route"] ?? <PlanRoutePage user={user} onProfileUpdated={setUser} />,
+    "plan-route": props.pages?.["plan-route"] ?? (
+      <PlanRoutePage user={user} onProfileUpdated={setUser} onStartNavigation={startNavigation} />
+    ),
     forum: props.pages?.forum ?? <ForumPage />,
     inbox: props.pages?.inbox ?? <InboxPage user={user} />,
     "canonical-network": props.pages?.["canonical-network"] ?? <CanonicalNetworkPage />,
     "accident-attribution": props.pages?.["accident-attribution"] ?? <AccidentAttributionPage />,
+    navigate: props.pages?.navigate ?? (
+      navigationHandoff ? (
+        <NavigatePage handoff={navigationHandoff} onExit={exitNavigation} />
+      ) : (
+        <PlanRoutePage user={user} onProfileUpdated={setUser} onStartNavigation={startNavigation} />
+      )
+    ),
   };
 
   return (

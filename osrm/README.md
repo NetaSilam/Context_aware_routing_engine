@@ -69,3 +69,12 @@ The 2026-08-03 smoke covers all four hard-preference combinations, but does not 
 PostGIS matching measurements. Before final evidence, run the corpus with every exclusion against
 the active national risk version, record coverage and matcher timing, and update the compatibility
 evidence. See `docs/CORRIDOR_MATCHER_BENCHMARK.md`.
+
+## Turn-by-turn steps
+
+Every `/route/v1/driving/...` request from the backend (`OsrmClient.request_routes`, in
+`backend/app/routing/osrm_client.py`) now includes `steps=true`. This adds per-leg maneuver
+instructions (turn type, modifier, street name, and maneuver location) to each candidate, which
+both the initial route plan and the live-navigation reroute endpoint surface as `steps` on every
+candidate for turn-by-turn text and voice guidance. This graph/profile pin does not need to change
+for this — `steps=true` is a request parameter, not a build-time graph option.

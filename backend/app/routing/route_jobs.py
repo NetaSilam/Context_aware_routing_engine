@@ -24,6 +24,7 @@ from app.abuse_protection import (
 )
 from app.config import get_settings
 from app.db import get_engine
+from app.routing.region import validate_route_region
 from app.routing.route_scoring_service import SCORING_FORMULA_VERSION
 from app.request_bounds import reject_unexpected_query_parameters
 from app.operations import log_route_event
@@ -111,22 +112,18 @@ class RouteHistoryPage(BaseModel):
 
 def _validate_region(payload: RouteJobCreate) -> None:
     settings = get_settings()
-    for name, longitude, latitude in (
-        ("origin", payload.origin_longitude, payload.origin_latitude),
-        ("destination", payload.destination_longitude, payload.destination_latitude),
-    ):
-        if not (
-            settings.route_region_min_longitude
-            <= longitude
-            <= settings.route_region_max_longitude
-            and settings.route_region_min_latitude
-            <= latitude
-            <= settings.route_region_max_latitude
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"{name} is outside the supported route region",
-            )
+    validate_route_region(
+        longitude=payload.origin_longitude,
+        latitude=payload.origin_latitude,
+        label="origin",
+        settings=settings,
+    )
+    validate_route_region(
+        longitude=payload.destination_longitude,
+        latitude=payload.destination_latitude,
+        label="destination",
+        settings=settings,
+    )
 
 
 def _queue_client() -> Celery:

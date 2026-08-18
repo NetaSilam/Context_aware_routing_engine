@@ -68,12 +68,40 @@ class OsrmLineString(BaseModel):
         return value
 
 
+class OsrmManeuver(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    type: str
+    modifier: str | None = None
+    location: tuple[float, float] | None = None
+
+
+class OsrmStep(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    distance: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    duration: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    name: str = ""
+    maneuver: OsrmManeuver
+
+
+class OsrmLeg(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    steps: list[OsrmStep] = Field(default_factory=list)
+
+
 class OsrmRouteCandidate(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     distance: Annotated[float, Field(gt=0, allow_inf_nan=False)]
     duration: Annotated[float, Field(gt=0, allow_inf_nan=False)]
     geometry: OsrmLineString
+    legs: list[OsrmLeg] = Field(default_factory=list)
+
+    @property
+    def steps(self) -> list[OsrmStep]:
+        return [step for leg in self.legs for step in leg.steps]
 
 
 class OsrmResponse(BaseModel):
@@ -154,6 +182,7 @@ class OsrmClient:
             "alternatives": "3",
             "overview": "full",
             "geometries": "geojson",
+            "steps": "true",
         }
         exclusions = supported_exclusions(
             avoid_highways=avoid_highways, avoid_tolls=avoid_tolls

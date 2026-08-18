@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     route_poll_ip_rate_limit: int = Field(default=300, ge=1, le=20_000)
     history_mutation_user_rate_limit: int = Field(default=20, ge=1, le=1000)
     history_mutation_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
+    route_reroute_user_rate_limit: int = Field(default=20, ge=1, le=1000)
+    route_reroute_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
+    route_reroute_retry_timeout_seconds: float = Field(default=2.0, gt=0.0, le=10.0)
+    route_reroute_db_pool_min_size: int = Field(default=1, ge=1, le=20)
+    route_reroute_db_pool_max_size: int = Field(default=10, ge=1, le=100)
+    forum_nearby_max_span_degrees: float = Field(default=1.0, gt=0.0, le=10.0)
     unfinished_route_jobs_per_user: int = Field(default=3, ge=1, le=100)
     unfinished_route_jobs_global: int = Field(default=100, ge=1, le=100_000)
     corridor_matcher_method: Literal["sampled-nearest"] = "sampled-nearest"
@@ -166,6 +172,10 @@ class Settings(BaseSettings):
             raise ValueError("route polling per-user limit cannot exceed the per-IP limit")
         if self.history_mutation_user_rate_limit > self.history_mutation_ip_rate_limit:
             raise ValueError("history mutation per-user limit cannot exceed the per-IP limit")
+        if self.route_reroute_user_rate_limit > self.route_reroute_ip_rate_limit:
+            raise ValueError("route reroute per-user limit cannot exceed the per-IP limit")
+        if self.route_reroute_db_pool_min_size > self.route_reroute_db_pool_max_size:
+            raise ValueError("route reroute DB pool min size cannot exceed its max size")
         if self.unfinished_route_jobs_per_user > self.unfinished_route_jobs_global:
             raise ValueError("per-user unfinished job capacity cannot exceed global capacity")
         if self.forum_post_user_rate_limit > self.forum_post_ip_rate_limit:

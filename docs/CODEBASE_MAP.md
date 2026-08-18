@@ -70,6 +70,10 @@ Startup is deliberately split into stages:
 - `backend/app/redis_client.py` provides Redis access.
 - `backend/app/health.py` implements liveness/readiness endpoints.
 - `backend/app/operations.py` contains structured operational logging and related helpers.
+  `BoundedOperationsMetrics.upstream_failures` is backed by a shared Redis counter (via a plain
+  sync `redis.Redis` client, not the async `app.redis_client`) rather than in-process memory, so
+  the count stays correct if the API is ever scaled to multiple replicas or workers instead of
+  each one reporting only its own partial total.
 - `backend/app/request_bounds.py` rejects oversized bodies/queries and unexpected query fields.
 
 ### HTTP/API features
@@ -175,7 +179,25 @@ Startup is deliberately split into stages:
   PRD decision 6/11), which imports `app.llm.tasks.enqueue_route_explanation` at module scope.
   This is a one-way dependency (`routing` → `llm`); `app/llm/` never imports from `app/routing/`.
 - `backend/app/routing/osrm_client.py` validates the internal OSRM response and maps user
-  motorway/toll preferences to supported OSRM exclusions.
+  motorway/toll preferences to supported OSRM exclusions. Also parses `legs[].steps[]`
+  (`OsrmStep`/`OsrmManeuver`) since every request now sends `steps=true` — this is what backs
+  turn-by-turn text on both the saved route-job result and live-navigation reroutes.
+- `backend/app/routing/live_routes.py` defines `POST /api/routing/reroute`: a synchronous
+  (thread-offloaded) counterpart to `route_job_tasks.py`'s pipeline for live navigation. Reuses
+  `OsrmClient`, `match_route_candidates`, and `score_route_candidates` directly instead of going
+  through Celery — see the "Live Navigation Extension" section of `ROUTING_FEATURE_PRD.md` for
+  why. Stateless: no trip/session table, position never stored server-side. The DB lookup uses a
+  shared, lazily-created `psycopg_pool.ConnectionPool` (`_get_db_pool`, sized via
+  `route_reroute_db_pool_min_size`/`_max_size`) instead of opening a fresh connection per request;
+  the OSRM retry loop is bounded by `route_reroute_retry_timeout_seconds` so a slow first attempt
+  can't be doubled by a second full-length one under load.
+- `backend/app/routing/region.py` holds `validate_route_region`, shared by `route_jobs.py`'s
+  route-creation endpoint and `live_routes.py`'s reroute endpoint (extracted from a
+  `route_jobs.py`-private helper of the same behavior).
+- `backend/app/forum/routes.py`'s `GET /api/forum/posts/nearby` (`list_posts_nearby`) is a
+  bounding-box read over `app.forum_posts`, added for live-navigation hazard-proximity alerts.
+  Must stay registered before `GET /api/forum/posts/{post_id}` so Starlette's path matching
+  doesn't try to parse `nearby` as a post UUID.
 - `backend/app/corridor_matcher.py` implements the selected `sampled-nearest-v1` matcher: one
   sample per 100 metres, 30 metre tolerance, deterministic nearest-corridor selection, and an
   80% low-coverage warning threshold.
@@ -213,12 +235,35 @@ Startup is deliberately split into stages:
 
 ## Frontend map
 
-- `frontend/src/App.tsx` loads the authenticated user and switches between the five pages.
+- `frontend/src/App.tsx` loads the authenticated user and switches between pages. `"navigate"` is
+  an `AppPageId` but deliberately not listed in `PageSwitcher.tsx`'s nav bar — it's only reached
+  via `RouteJobShell`'s "Start navigation" button (through `PlanRoutePage.onStartNavigation` →
+  `App`'s `navigationHandoff` state), never by direct navigation.
 - `frontend/src/pages/PlanRoutePage.tsx` owns route submission, polling, preferences, and history.
   It passes `job?.llm_explanation` (present on both the live-poll `RouteJob` and the "open saved
   history" `RouteJob`, same type either way) straight through to `RouteJobShell`, which renders it
   as an additive italic paragraph inside the completed result — never gating the map or numeric
-  breakdown, which render identically whether or not the explanation has arrived yet.
+  breakdown, which render identically whether or not the explanation has arrived yet. It also
+  builds the `NavigationHandoff` (chosen candidate + destination + scoring context) passed to
+  `NavigatePage.tsx` when navigation starts.
+- `frontend/src/pages/NavigatePage.tsx` is the live turn-by-turn view: `navigator.geolocation`
+  drives everything (off-route detection, maneuver-advance, hazard proximity, arrival) through a
+  single `watchPosition` callback that reads mutable state via refs (`candidateRef`, `mutedRef`,
+  `nearbyHazardsRef`, ...) rather than depending on them directly, so the effect subscribes to
+  geolocation exactly once per mount instead of re-subscribing on every reroute/mute/hazard-poll.
+  Reroute calls go through `api/liveRouting.ts` to `POST /api/routing/reroute`; failures never
+  clear the currently-displayed route, only surface a non-blocking banner. Nothing about the
+  drive is sent to or stored by the backend beyond the occasional reroute request itself.
+  `frontend/src/lib/navigation.ts` holds the pure, unit-tested geometry/debounce/throttle/dedupe
+  helpers this page is built from (`distanceToPolylineMeters`, `createOffRouteDetector`,
+  `createIntervalThrottle`, `createSeenIdTracker`, `formatManeuverText`).
+- `frontend/src/lib/navigationSession.ts` persists the live `NavigationHandoff` plus the current
+  (possibly-rerouted) candidate and step index to `sessionStorage`, so a refresh or crashed tab
+  mid-drive resumes navigation instead of forcing the driver back to route planning. This is
+  browser-local only — it does not change `live_routes.py`'s server-side statelessness above.
+  `App.tsx` reads it on mount to decide the initial page/handoff; `NavigatePage.tsx` keeps it in
+  sync via a `useEffect` on `[handoff, candidate, stepIndex]` (deliberately excluding live
+  `position`, since re-acquiring a fresh GPS fix on resume is correct).
 - `frontend/src/pages/ForumPage.tsx` owns the hazard-reporting feed: filtering, pagination, post
   creation, and opening a post into `components/forum/PostDetailPanel.tsx` for comments and
   voting. Both `components/forum/PostList.tsx` and `PostDetailPanel.tsx` also render the LLM

@@ -8,11 +8,13 @@ import RouteJobShell from "../components/route-jobs/RouteJobShell";
 import RouteHistoryPanel from "../components/route-jobs/RouteHistoryPanel";
 import { createIdempotencyKey } from "../lib/idempotencyKey";
 import type { DrivingExperience, UserProfile, VehicleType } from "../types/auth";
-import type { RouteJob } from "../types/routeJobs";
+import type { NavigationHandoff } from "../types/navigation";
+import type { RouteCandidateResult, RouteJob } from "../types/routeJobs";
 
 interface PlanRoutePageProps {
   user: UserProfile;
   onProfileUpdated: (user: UserProfile) => void;
+  onStartNavigation: (handoff: NavigationHandoff) => void;
 }
 
 function initials(email: string): string {
@@ -142,6 +144,23 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
     }
   }
 
+  function startNavigation(candidate: RouteCandidateResult) {
+    if (!job || !job.result) return;
+    props.onStartNavigation({
+      candidate,
+      destinationLongitude: job.destination_longitude,
+      destinationLatitude: job.destination_latitude,
+      scoringContext: {
+        driving_experience: props.user.driving_experience,
+        vehicle_type: props.user.vehicle_type,
+        avoid_tolls: props.user.avoid_tolls,
+        avoid_highways: props.user.avoid_highways,
+        reference_risk_p95: job.result.reference_risk_p95,
+        risk_data_version: job.result.risk_data_version,
+      },
+    });
+  }
+
   async function runAgain(historyJobId: string) {
     if (routeStatus === "submitting" || routeStatus === "polling") return;
     setRouteStatus("submitting");
@@ -230,6 +249,7 @@ export default function PlanRoutePage(props: PlanRoutePageProps): JSX.Element {
         error={routeError ?? undefined}
         result={job?.result}
         llmExplanation={job?.llm_explanation}
+        onStartNavigation={startNavigation}
       />
       <RouteHistoryPanel refreshKey={routeStatus === "completed" ? job?.id ?? null : null} onOpen={openHistory} onRunAgain={runAgain} />
     </main>

@@ -100,15 +100,25 @@ async def enforce_action_rate_limit(
         f"action-rate:{action}:user:{user_id}",
         f"action-rate:{action}:ip:{_client_ip(request)}",
     ]
-    try:
-        counts = await get_redis().eval(
-            RATE_LIMIT_SCRIPT,
-            len(keys),
-            *keys,
-            settings.route_protection_window_seconds,
-        )
-    except RedisError as exc:
-        raise protection_unavailable("Request protection is temporarily unavailable.") from exc
+    counts = None
+    last_error: RedisError | None = None
+    # Mirrors the retry-once pattern used for OSRM/DB calls elsewhere: a single transient
+    # Redis blip under load shouldn't immediately 503 every in-flight request.
+    for _ in range(2):
+        try:
+            counts = await get_redis().eval(
+                RATE_LIMIT_SCRIPT,
+                len(keys),
+                *keys,
+                settings.route_protection_window_seconds,
+            )
+            break
+        except RedisError as exc:
+            last_error = exc
+            continue
+    if counts is None:
+        assert last_error is not None
+        raise protection_unavailable("Request protection is temporarily unavailable.") from last_error
     if counts[0] > user_limit or counts[1] > ip_limit:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

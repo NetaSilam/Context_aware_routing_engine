@@ -759,6 +759,52 @@ crash and not a guarantee of the globally safest possible route.
   old history remains explainable after later changes.
 - Public Nominatim is a replaceable convenience. Its failure must never prevent map/numeric
   coordinate routing, and automated testing must never consume its public quota.
+
+## Live Navigation Extension
+
+Added after the original PRD: a "Start navigation" flow (`POST /api/routing/reroute`,
+`backend/app/routing/live_routes.py`) that recalculates a route mid-drive when the client
+detects the driver has deviated from the planned polyline.
+
+- **Bypasses the Celery job pipeline deliberately.** The job pipeline (queue, DB claim/lease,
+  poll-until-complete) exists to absorb unpredictable load across many users *planning* trips; it
+  is not built for a single driver needing a sub-second recalculation. The reroute endpoint calls
+  the same building blocks the job pipeline uses (`OsrmClient.request_routes`,
+  `match_route_candidates`, `score_route_candidates`) directly from a request handler instead,
+  offloaded via `asyncio.to_thread` so it does not block the event loop and so concurrent drivers
+  are served independently rather than serialized. This keeps full safety-weighting fidelity —
+  a reroute is scored exactly like the original plan, using the same `reference_risk_p95` and
+  `risk_data_version` the driver already saw — while dropping only the job pipeline's Celery-level
+  retry/crash-resume guarantees, which don't matter for an occasional, client-retriable call. A
+  single inline retry on transient OSRM/DB failure replaces them, bounded overall by
+  `route_reroute_retry_timeout_seconds` so a slow first attempt isn't doubled by a second
+  full-length one under concurrent load; exhausted retries return a typed 503 rather than a bare
+  error, so the client knows to keep the current route and retry later. The DB half of that retry
+  reuses a small pooled connection (`live_routes._get_db_pool`) rather than opening a fresh one
+  per request, and `operations.BoundedOperationsMetrics`'s upstream-failure count is Redis-backed
+  so it stays accurate if the API is ever scaled to multiple replicas.
+- **Stateless by design, server-side.** No trip/session is recorded server-side — this was an
+  explicit user requirement (no route-history logging for this feature), not an oversight.
+  Off-route detection, turn-by-turn instruction timing, and hazard-proximity checks all run
+  client-side against data the client already has (the active route's geometry/steps, and a
+  periodically-fetched nearby hazard-report list), so no continuous position stream is ever sent
+  to the server — only the occasional reroute call, which is rate-limited the same way
+  `route-create` and other request-scoped actions are (`enforce_action_rate_limit`,
+  `route_reroute_user_rate_limit` / `route_reroute_ip_rate_limit`; that check itself now retries
+  once on a transient Redis error before failing closed, matching the OSRM/DB retry pattern
+  above). The frontend separately persists the in-progress route/step to `sessionStorage`
+  (`frontend/src/lib/navigationSession.ts`) purely so a refresh resumes navigation — this is
+  browser-local state, not a server-side session, and doesn't change the statelessness above.
+- **Turn-by-turn steps are requested for every OSRM call now**, not just reroutes
+  (`steps=true` added to `OsrmClient.request_routes`; see `osrm/README.md`). The original plan
+  job's saved `result.candidates[*].steps` gets this data for free, since both code paths already
+  serialize the same OSRM candidate model.
+- Nearby hazard reports (`GET /api/forum/posts/nearby`, in `backend/app/forum/routes.py`) is a
+  plain bounding-box read over `app.forum_posts` — no new PostGIS geometry column, since that
+  table already stores plain `longitude`/`latitude`. This is intentionally separate from and
+  reuses the existing forum notification stream (`GET /api/notifications/stream`) for
+  non-geographic forum alerts (comments/votes/DMs) during navigation, rather than building a new
+  notification channel.
 - The final architecture meets the multi-image requirement through the gateway, API/worker
   application image, PostGIS, Redis, OSRM, initializer, and test-only services while exposing
   only the gateway.

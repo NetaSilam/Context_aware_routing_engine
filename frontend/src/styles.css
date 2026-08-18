@@ -1047,3 +1047,167 @@ input[readonly] {
   font-size: 0.78rem;
   font-weight: 600;
 }
+
+.start-navigation-button {
+  margin-bottom: 16px;
+}
+
+.nav-page {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  background: #0a5466;
+  color: #f8fbfc;
+}
+
+.nav-page__map {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.nav-page__map-rotator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  /* width/height are set inline (measured from the viewport's actual diagonal, in
+     NavigatePage.tsx) so the rotated layer fully covers the viewport at any angle. */
+  transform-origin: center center;
+  transition: transform 0.25s linear;
+}
+
+.nav-page__map-rotator .corridor-map {
+  width: 100%;
+  height: 100%;
+}
+
+.nav-page__center-arrow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  margin-left: -11px;
+  margin-top: -14px;
+  border-left: 11px solid transparent;
+  border-right: 11px solid transparent;
+  border-bottom: 26px solid #1b8fd1;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+  z-index: 900;
+  pointer-events: none;
+}
+
+.nav-page__recenter {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  z-index: 900;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 999px;
+  background: #0d7288;
+  color: #f8fbfc;
+  font-weight: 600;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+}
+
+.nav-page__bottom-bar {
+  position: relative;
+  padding: 16px 60px;
+  background: linear-gradient(135deg, #0d7288, #0a5466);
+  text-align: center;
+}
+
+.nav-page__instruction-text {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.nav-page__eta {
+  margin: 6px 0 0;
+  font-size: 0.9rem;
+  color: rgba(248, 251, 252, 0.85);
+}
+
+.nav-page__mute-button {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.nav-page__steps-toggle {
+  margin: 10px auto 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #f8fbfc;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.nav-page__steps-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  max-height: 45vh;
+  overflow-y: auto;
+  background: #06333f;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 4px 20px;
+  box-shadow: 0 -8px 18px rgba(0, 0, 0, 0.35);
+}
+
+.nav-page__steps-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-page__steps-item {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.nav-page__steps-item:last-child {
+  border-bottom: none;
+}
+
+.nav-page__banners {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 20px;
+}
+
+.nav-page__banner {
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 0.9rem;
+}
+
+.nav-page__banner--hazard {
+  background: rgba(176, 52, 34, 0.5);
+}
+
+.nav-page__controls {
+  display: flex;
+  gap: 10px;
+  padding: 12px 20px;
+  background: #06333f;
+}
+
+.nav-page__controls .ghost-button {
+  color: #f8fbfc;
+}

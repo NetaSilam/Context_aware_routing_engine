@@ -55,6 +55,24 @@ export async function listPosts(
   return request<PostPage>(`/api/forum/posts?${params.toString()}`);
 }
 
+export interface NearbyBounds {
+  minLongitude: number;
+  minLatitude: number;
+  maxLongitude: number;
+  maxLatitude: number;
+}
+
+export async function listNearbyPosts(bounds: NearbyBounds, limit = 50): Promise<PostPage> {
+  const params = new URLSearchParams({
+    min_lon: String(bounds.minLongitude),
+    min_lat: String(bounds.minLatitude),
+    max_lon: String(bounds.maxLongitude),
+    max_lat: String(bounds.maxLatitude),
+    limit: String(limit),
+  });
+  return request<PostPage>(`/api/forum/posts/nearby?${params.toString()}`);
+}
+
 export async function getPost(postId: string): Promise<PostDetail> {
   return request<PostDetail>(`/api/forum/posts/${encodeURIComponent(postId)}`);
 }

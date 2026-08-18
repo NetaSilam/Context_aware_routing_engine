@@ -62,6 +62,8 @@ services:
       GEOCODER_RESPONSE_TIMEOUT_SECONDS: "0.1"
       GEOCODER_USER_RATE_LIMIT: "4"
       GEOCODER_IP_RATE_LIMIT: "8"
+      ROUTE_REROUTE_USER_RATE_LIMIT: "3"
+      ROUTE_REROUTE_IP_RATE_LIMIT: "10"
 
   worker:
     volumes: !reset []
