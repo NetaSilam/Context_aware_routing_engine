@@ -49,8 +49,7 @@ attributions. It reports source and output counts, confidence-tier counts, the f
 year range, refresh duration, storage use, and the length-weighted risk p95. A validated version
 is activated transactionally; a failed refresh leaves the prior version active. Run a new
 national-data refresh as an initialization/maintenance operation, never from a public route
-request. The verified full-data row counts, p95, duration, and storage measurement are recorded
-in [`docs/RISK_DATA_REFRESH_REPORT.md`](docs/RISK_DATA_REFRESH_REPORT.md).
+request.
 
 ## Running it locally
 
@@ -109,10 +108,9 @@ docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml \
 docker compose --env-file .env.test -f compose.yaml -f compose.test.yaml down -v
 ```
 
-The complete clean-machine grading validation, category commands, feature-to-test matrix,
-performance evidence, and current verified deferrals are in
-[`docs/GRADING_VALIDATION.md`](docs/GRADING_VALIDATION.md). The same suite runs automatically
-on every push via `.github/workflows/grading-validation.yml`.
+The complete clean-machine grading validation and its per-category commands are documented in
+[`docs/LOCAL_SETUP_AND_OPERATIONS.md`](docs/LOCAL_SETUP_AND_OPERATIONS.md). The same suite runs
+automatically on every push via `.github/workflows/grading-validation.yml`.
 
 ## Deploying to Azure
 
