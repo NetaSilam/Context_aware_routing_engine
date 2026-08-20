@@ -61,13 +61,26 @@ def submit_and_wait(client: httpx.Client, *, origin_label: str = "Saved origin")
     )
     assert accepted.status_code == 202
     deadline = time.monotonic() + 15
+    completed: dict[str, object] | None = None
     while time.monotonic() < deadline:
         loaded = client.get(f"/api/route-jobs/{accepted.json()['id']}")
         assert loaded.status_code == 200
-        if loaded.json()["status"] == "completed":
-            return loaded.json()
-        assert loaded.json()["status"] != "failed", loaded.text
+        body = loaded.json()
+        if body["status"] == "completed":
+            # The explanation is attached by a separate, asynchronous LLM job enqueued right
+            # after completion (app/routing/route_job_tasks.py). Returning as soon as routing
+            # itself finishes — without waiting for that follow-up write — races the explanation
+            # task: callers that snapshot this "completed" body (e.g. to compare it against a
+            # later re-fetch) can observe the explanation land in between, mistaking an unrelated
+            # background write for a mutation.
+            if body["result"].get("llm_explanation"):
+                return body
+            completed = body
+        else:
+            assert body["status"] != "failed", loaded.text
         time.sleep(0.1)
+    if completed is not None:
+        pytest.fail("route job completed but its LLM explanation never arrived")
     pytest.fail("route job did not complete")
 
 
