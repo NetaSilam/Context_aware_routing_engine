@@ -1,10 +1,10 @@
-# Sa Bracha — Context-Aware Safe Routing Engine
+# Sa Bracha - Context-Aware Safe Routing Engine
 
 Sa Bracha ("סע ברכה") is a full-stack driving-safety platform, not just a routing algorithm:
 it ranks candidate routes by balancing travel time against historical accident risk, guides
 drivers live with turn-by-turn navigation and automatic rerouting, and lets the community
-report and discuss road hazards in a moderated forum — all personalized to each driver's
-profile. Built for Software Engineering for ML (Spring 2026).
+report and discuss road hazards in a moderated forum - all personalized to each driver's
+profile. 
 
 **Live deployment:** http://sweng-group-14.eastus.cloudapp.azure.com/ (the Azure VM must be
 powered on; see [Deploying to Azure](#deploying-to-azure) below).
@@ -14,36 +14,26 @@ powered on; see [Deploying to Azure](#deploying-to-azure) below).
 - **Risk-aware route planning.** An authenticated user submits an origin and destination (by
   address search, map click, or numeric coordinates); a background worker requests up to three
   OSRM candidates, scores each against precomputed historical accident-density corridors, and
-  ranks them by a combined safety/time cost. Every input to the ranking — raw metrics,
-  normalized values, weights, and an AI-generated explanation of the pick — is shown to the
+  ranks them by a combined safety/time cost. Every input to the ranking - raw metrics,
+  normalized values, weights, and an AI-generated explanation of the pick - is shown to the
   user, not just the final answer.
 - **Personalized safety weighting.** The safety weight is derived automatically from driving
   experience, vehicle type, and time of day, then scaled by an explicit user preference (Low /
-  Balanced / High — how much *they* personally weigh safety vs. time), set at signup or in
+  Balanced / High - how much *they* personally weigh safety vs. time), set at signup or in
   profile preferences. See the "Safety Preference Extension" section of
   [`docs/ROUTING_FEATURE_PRD.md`](docs/ROUTING_FEATURE_PRD.md).
 - **Live turn-by-turn navigation.** Starting navigation on a chosen route hands off to a
   full-screen driving view with voice and text guidance, automatic off-route detection and
   rerouting (scored with the same weighting as the original plan), and nearby hazard-report
-  alerts — see the "Live Navigation Extension" section of the same PRD.
+  alerts - see the "Live Navigation Extension" section of the same PRD.
 - **Community hazard forum.** Drivers report potholes, flooding, broken signals, and other
   hazards with photos, discuss them in comments, and vote. Every report is automatically
   triaged by an LLM for severity and checked for near-duplicates against nearby/recent reports,
-  clearly labeled as AI-generated and never presented as verified fact — see
+  clearly labeled as AI-generated and never presented as verified fact - see
   [`docs/FORUM_FEATURE_PRD.md`](docs/FORUM_FEATURE_PRD.md) and
   [`docs/LLM_FEATURE_PRD.md`](docs/LLM_FEATURE_PRD.md).
-- **Accident-attribution and canonical-network explorers.** Read-only pages for inspecting the
+- **Accident-attribution explorer.** Read-only page for inspecting the
   underlying prepared accident and road-network data the risk scoring is built on.
-
-See [`PROJECT_REQUIREMENTS.md`](PROJECT_REQUIREMENTS.md) for the full spec, architecture, and
-TODO list.
-
-For team onboarding, start with the [project codebase map](docs/CODEBASE_MAP.md) and the
-[documentation guide](docs/DOCUMENTATION_GUIDE.md). The guide identifies which documents are
-current evidence and which are historical planning material.
-
-For day-to-day local startup, shutdown, reset, and test commands, see
-[`docs/LOCAL_SETUP_AND_OPERATIONS.md`](docs/LOCAL_SETUP_AND_OPERATIONS.md).
 
 ## Architecture
 
@@ -51,7 +41,7 @@ Alembic owns the application schema, a one-shot initializer verifies foundation-
 and builds the derived risk dataset, and Compose starts PostGIS, Redis, self-hosted OSRM,
 FastAPI, Celery workers (route scoring and LLM triage/dedup/explanation, on physically separate
 queues), and the compiled React application behind Nginx, in dependency order. Only the Nginx
-gateway publishes a host port — PostgreSQL, Redis, OSRM, and FastAPI communicate only on the
+gateway publishes a host port - PostgreSQL, Redis, OSRM, and FastAPI communicate only on the
 Compose network.
 
 The initializer builds an immutable `RISK_DATA_VERSION` from the prepared corridors and accident
@@ -76,7 +66,7 @@ ensure the required foundation tables are already present. Initialization refuse
 checksums, changed row counts, partial tables, or missing tables.
 
 For the prepared real-data artifacts committed under `data/`, copy `.env.real.example` to
-`.env.real` and replace the local secret placeholders (including an LLM provider key —
+`.env.real` and replace the local secret placeholders (including an LLM provider key -
 `GEMINI_API_KEY` by default):
 
 ```sh
@@ -130,7 +120,7 @@ The production site runs as the same Compose stack (`--env-file .env.real`) on a
 VM, fronted by Nginx on port 80. To deploy the current `master` (or any branch):
 
 1. Make sure the VM is powered on (Azure Portal).
-2. From the repository's **Actions** tab, run the **deploy** workflow (`workflow_dispatch`) —
+2. From the repository's **Actions** tab, run the **deploy** workflow (`workflow_dispatch`) -
    any collaborator can trigger it. It pulls the selected branch onto the VM, rebuilds and
    restarts the stack, and fails the run if the site or its `/api` proxy doesn't come back
    healthy within about three minutes.
