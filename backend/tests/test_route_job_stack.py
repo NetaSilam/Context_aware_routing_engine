@@ -121,13 +121,23 @@ def test_authenticated_route_job_completes_and_reloads_persisted_result() -> Non
         for _ in range(50):
             response = owner.get(f"/api/route-jobs/{job_id}")
             assert response.status_code == 200
-            observed_states.add(response.json()["status"])
-            if response.json()["status"] in {"completed", "failed"}:
+            body = response.json()
+            observed_states.add(body["status"])
+            if body["status"] == "failed":
                 break
+            if body["status"] == "completed":
+                # The explanation is attached by a separate, asynchronous LLM job enqueued right
+                # after completion (app/routing/route_job_tasks.py). Breaking out as soon as
+                # routing itself finishes races that follow-up write: the result captured here
+                # gets compared against later re-fetches below, which can observe the explanation
+                # land in between and look like an unrelated mutation.
+                if body["result"].get("llm_explanation"):
+                    break
             time.sleep(0.1)
         assert response is not None
         assert response.json()["status"] == "completed", response.text
         result = response.json()["result"]
+        assert result.get("llm_explanation"), "route job completed but its LLM explanation never arrived"
         assert len(result["candidates"]) == 3
         assert result["chosen_index"] in {0, 1, 2}
         assert result["risk_choice_available"] is True
