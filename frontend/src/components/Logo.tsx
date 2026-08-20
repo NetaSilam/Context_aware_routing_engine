@@ -7,7 +7,7 @@ const LOGO_SRC: Record<LogoVariant, string> = {
 
 const DEFAULT_HEIGHT: Record<LogoVariant, number> = {
   light: 64,
-  dark: 40,
+  dark: 72,
 };
 
 interface LogoProps {
