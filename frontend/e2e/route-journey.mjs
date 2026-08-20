@@ -13,14 +13,14 @@ try {
   await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill("correct-password");
+  await page.getByLabel("Password", { exact: true }).fill("correct-password");
   await page.getByRole("button", { name: "Create account" }).click();
-  await page.locator(".app-session-bar").getByText(`Signed in as ${email}`, { exact: true }).waitFor();
+  await page.locator(".session-card").getByText(`Signed in as ${email}`, { exact: true }).waitFor();
 
   await page.getByRole("button", { name: "Edit route preferences" }).click();
   await page.getByLabel("Vehicle type").selectOption("motorcycle");
   await page.getByRole("button", { name: "Save preferences" }).click();
-  await page.getByText(/motorcycle/).waitFor();
+  await page.getByText(/motorcycle/i).waitFor();
 
   await page.getByRole("region", { name: "origin address search" }).getByLabel("Address").fill("Tel Aviv");
   await page.getByRole("button", { name: "Search origin" }).click();
