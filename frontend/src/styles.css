@@ -948,9 +948,13 @@ input[readonly] {
 }
 
 .forum-feed__duplicate {
-  font-size: 0.85rem;
+  display: inline-block;
+  font-size: 0.8rem;
   font-weight: 600;
-  color: #b03422;
+  color: #6a3aa8;
+  background: rgba(148, 88, 224, 0.14);
+  border-radius: 999px;
+  padding: 2px 10px;
   margin: 0 0 8px;
 }
 

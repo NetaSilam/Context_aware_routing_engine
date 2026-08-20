@@ -71,7 +71,7 @@ export default function PostDetailPanel(props: PostDetailPanelProps): JSX.Elemen
           className="forum-feed__duplicate"
           title="AI-detected: this report's text looks similar to a nearby report of the same hazard type."
         >
-          🤖 AI: possible duplicate of report {post.duplicate_of_post_id}
+          🤖 AI: possible duplicate of "{post.duplicate_of_post_title ?? "another report"}"
         </p>
       ) : null}
       <p>{post.body}</p>

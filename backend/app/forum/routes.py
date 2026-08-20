@@ -93,6 +93,7 @@ class PostSummary(BaseModel):
     llm_hazard_type_suggested: str | None
     llm_severity: str | None
     duplicate_of_post_id: UUID | None
+    duplicate_of_post_title: str | None
     thumbnail_media_id: UUID | None
     created_at: datetime
     updated_at: datetime
@@ -175,6 +176,9 @@ def _serialize_post(row: Any, viewer_id: int, *, media: list[Any] | None = None)
         "llm_hazard_type_suggested": row["llm_hazard_type_suggested"],
         "llm_severity": row["llm_severity"],
         "duplicate_of_post_id": row["duplicate_of_post_id"],
+        "duplicate_of_post_title": (
+            row["duplicate_of_post_title"] if "duplicate_of_post_title" in row.keys() else None
+        ),
         # When the caller already fetched full media (detail views), derive it from that
         # rather than requiring every list query to also carry a thumbnail_media_id column.
         "thumbnail_media_id": (media[0]["id"] if media else None) if media is not None else row["thumbnail_media_id"],
@@ -343,6 +347,10 @@ async def list_posts(
                                p.hazard_type, p.title, p.longitude, p.latitude,
                                p.upvote_count, p.downvote_count, p.comment_count,
                                p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
+                               (
+                                   SELECT dp.title FROM app.forum_posts dp
+                                   WHERE dp.id = p.duplicate_of_post_id
+                               ) AS duplicate_of_post_title,
                                p.created_at, p.updated_at, v.value AS my_vote_value,
                                (
                                    SELECT m.id FROM app.forum_post_media m
@@ -414,6 +422,10 @@ async def list_posts_nearby(
                                p.hazard_type, p.title, p.longitude, p.latitude,
                                p.upvote_count, p.downvote_count, p.comment_count,
                                p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
+                               (
+                                   SELECT dp.title FROM app.forum_posts dp
+                                   WHERE dp.id = p.duplicate_of_post_id
+                               ) AS duplicate_of_post_title,
                                p.created_at, p.updated_at, v.value AS my_vote_value,
                                (
                                    SELECT m.id FROM app.forum_post_media m
@@ -466,6 +478,10 @@ async def get_post(
                                p.hazard_type, p.title, p.body, p.longitude, p.latitude,
                                p.upvote_count, p.downvote_count, p.comment_count,
                                p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
+                               (
+                                   SELECT dp.title FROM app.forum_posts dp
+                                   WHERE dp.id = p.duplicate_of_post_id
+                               ) AS duplicate_of_post_title,
                                p.created_at, p.updated_at, v.value AS my_vote_value
                         FROM app.forum_posts p
                         JOIN app.users u ON u.id = p.author_user_id
@@ -520,6 +536,10 @@ async def update_post(
                                p.hazard_type, p.title, p.body, p.longitude, p.latitude,
                                p.upvote_count, p.downvote_count, p.comment_count,
                                p.llm_hazard_type_suggested, p.llm_severity, p.duplicate_of_post_id,
+                               (
+                                   SELECT dp.title FROM app.forum_posts dp
+                                   WHERE dp.id = p.duplicate_of_post_id
+                               ) AS duplicate_of_post_title,
                                p.created_at, p.updated_at, v.value AS my_vote_value
                         FROM app.forum_posts p
                         JOIN app.users u ON u.id = p.author_user_id

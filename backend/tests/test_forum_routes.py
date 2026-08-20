@@ -54,6 +54,7 @@ def _post_row(**overrides: object) -> dict:
         "llm_hazard_type_suggested": None,
         "llm_severity": None,
         "duplicate_of_post_id": None,
+        "duplicate_of_post_title": None,
         "thumbnail_media_id": None,
         "created_at": datetime.now(timezone.utc),
         "updated_at": datetime.now(timezone.utc),
@@ -99,6 +100,7 @@ def test_serialize_post_includes_llm_classification_fields() -> None:
     assert unclassified["llm_hazard_type_suggested"] is None
     assert unclassified["llm_severity"] is None
     assert unclassified["duplicate_of_post_id"] is None
+    assert unclassified["duplicate_of_post_title"] is None
 
     duplicate_id = uuid4()
     classified = _serialize_post(
@@ -106,12 +108,14 @@ def test_serialize_post_includes_llm_classification_fields() -> None:
             llm_hazard_type_suggested="flooding",
             llm_severity="high",
             duplicate_of_post_id=duplicate_id,
+            duplicate_of_post_title="Flooded underpass on Route 4",
         ),
         viewer_id=1,
     )
     assert classified["llm_hazard_type_suggested"] == "flooding"
     assert classified["llm_severity"] == "high"
     assert classified["duplicate_of_post_id"] == duplicate_id
+    assert classified["duplicate_of_post_title"] == "Flooded underpass on Route 4"
 
 
 def test_serialize_post_derives_thumbnail_media_id_from_the_row_or_the_media_list() -> None:

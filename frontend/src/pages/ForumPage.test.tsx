@@ -34,6 +34,7 @@ const post = {
   llm_hazard_type_suggested: null,
   llm_severity: null,
   duplicate_of_post_id: null,
+  duplicate_of_post_title: null,
   thumbnail_media_id: null,
 };
 
@@ -120,7 +121,7 @@ describe("ForumPage", () => {
       if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
       if (url.startsWith("/api/forum/posts?")) {
         return Promise.resolve(jsonResponse({
-          items: [{ ...post, duplicate_of_post_id: originalId }],
+          items: [{ ...post, duplicate_of_post_id: originalId, duplicate_of_post_title: "Pothole on Route 4 (older report)" }],
           offset: 0,
           limit: 20,
           has_more: false,
@@ -132,7 +133,7 @@ describe("ForumPage", () => {
     render(<ForumPage />);
 
     expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
-    expect(screen.getByText(`🤖 AI: possible duplicate of report ${originalId}`)).toBeTruthy();
+    expect(screen.getByText(`🤖 AI: possible duplicate of "Pothole on Route 4 (older report)"`)).toBeTruthy();
   });
 
   it("blocks submission until title and description are filled in", async () => {
@@ -525,6 +526,7 @@ describe("ForumPage", () => {
       media: [],
       llm_severity: "medium" as const,
       duplicate_of_post_id: originalId,
+      duplicate_of_post_title: "Pothole on Route 4 (older report)",
     };
     const fetchMock = baseFetchMock();
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -547,6 +549,6 @@ describe("ForumPage", () => {
 
     expect(await screen.findByText("Wide and deep, watch out.")).toBeTruthy();
     expect(screen.getByText("🤖 AI: Medium severity")).toBeTruthy();
-    expect(screen.getByText(`🤖 AI: possible duplicate of report ${originalId}`)).toBeTruthy();
+    expect(screen.getByText(`🤖 AI: possible duplicate of "Pothole on Route 4 (older report)"`)).toBeTruthy();
   });
 });
