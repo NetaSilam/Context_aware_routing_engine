@@ -56,8 +56,11 @@ and comments (text only in this ticket), with anonymity and voting, before media
       `upvote_count`/`downvote_count` atomically in the same transaction (guarded by a
       `pg_advisory_xact_lock` so two concurrent votes from the same user can never both read "no
       existing vote" and double-apply a counter delta).
-- [x] `GET /api/forum/me/dashboard` returns the caller's post count, comment count, and net votes
-      received, computed from the denormalized counters.
+- [x] `GET /api/forum/me/dashboard` returns the caller's post count, comment count, total
+      upvotes received, total downvotes received, and net votes received, computed from the
+      denormalized counters. The separate upvote/downvote totals were added after net-only
+      turned out to hide the difference between "well-liked but controversial" and "quietly
+      ignored" - both net to the same number.
 - [x] Every author field in every response respects `is_anonymous`; `test_forum_stack.py`'s
       `test_anonymous_post_and_comment_hide_author_from_others_but_not_from_self` asserts no
       response body contains the real author's ID or email for an anonymous post/comment.
@@ -163,7 +166,10 @@ and retrieval (reuses its storage/validation path for message attachments).
 ## 5. Deliver live notifications over Server-Sent Events
 
 **What to build:** Real-time in-app notification delivery for new DMs and new votes, without
-polling, per PRD decisions 13-16.
+polling, per PRD decisions 13-16. Extended after an audit against feedback.md's explicit
+technical note — "all forum feeds, chat history retrievals, and notification delivery must
+operate in real-time without requiring manual page refreshes" — to also cover the shared feed
+itself and an open DM thread, not just the personal notification badge.
 
 **Blocked by:** 2. Deliver the core hazard-report feed; 4. Deliver direct messaging.
 
@@ -211,6 +217,22 @@ polling, per PRD decisions 13-16.
       API reads a body from a GET. This also means the media-upload prefix/suffix exemptions
       added in tickets 3-4 apply only to non-GET requests now, which was already the only case
       that mattered (uploads are POSTs).
+- [x] The personal per-recipient channel above cannot reach a bystander just browsing the feed —
+      a `post_created`/`comment_created`/`vote_changed` event is only ever published to the
+      content's own author. `GET /api/forum/activity/stream` adds a second, shared broadcast
+      channel (`forum-activity`, distinct from the per-user `forum-notifications:{user_id}`
+      channels) that every connected feed viewer subscribes to; on any event it re-fetches the
+      feed (and the open report's comments, if that's the affected post) rather than trusting
+      the event body, so a stale client always ends up re-reading the current row.
+- [x] `MessagesPage` reuses the existing personal notification connection rather than opening a
+      second one — a `new_dm` event for the open conversation's other party triggers a
+      re-fetch of that thread; any other `new_dm` just refreshes the conversation list.
+- [x] jsdom has no native `EventSource` at all (not just no auto-reconnect, as ticket 5's mocked
+      tests already assumed); a shared `frontend/src/test-setup.ts` (wired into `vite.config.ts`
+      via `test.setupFiles`) provides a no-op default so any component opening one under test
+      doesn't throw, while `ForumPage.test.tsx`/`MessagesPage.test.tsx` still install their own
+      local mock (matching `NotificationIndicator.test.tsx`'s pattern) to assert the actual
+      live-update behavior.
 
 ## 6. Add forum/messaging rate limiting and abuse protection
 
@@ -231,6 +253,16 @@ retrieval; 4. Deliver direct messaging.
       `forum-vote`).
 - [x] DM sends already have their own Redis-backed per-user/per-IP limit (`dm-send` action,
       ticket 4) — shipped alongside that ticket rather than leaving it unlimited in the meantime.
+- [x] Post/comment **edit and delete** now carry their own `forum-mutation` rate limit —
+      the original pass only covered creation, leaving unlimited rapid editing/deletion as a
+      real gap found in a later audit pass. `logout` and profile update now carry a matching
+      `account-mutation` limit for the same reason (they had none at all before).
+- [x] Post and comment **creation** now also accepts an optional client-generated
+      `Idempotency-Key` header; the insert uses `ON CONFLICT (author_user_id, idempotency_key)
+      WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING ...` against a partial unique
+      index, re-selecting the existing row on a no-op conflict, so a genuine concurrent
+      double-submit (not just a sequential retry) can only ever create one row — proven by a
+      `ThreadPoolExecutor`-based concurrency test, not just a sequential one.
 - [x] `enforce_action_rate_limit` (shared by every action above) already sets `Retry-After` on
       every `429`.
 - [x] Redis unavailability makes forum/DM writes fail closed with a controlled `503`; read-only

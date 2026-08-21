@@ -237,7 +237,8 @@ grading.
     `recipient_user_id`, a `kind`, a small JSON payload with the referenced IDs and (already
     anonymity-filtered) actor label, `created_at`, and nullable `read_at`.
 
-14. **Live delivery.** Notification creation publishes a small event to a Redis Pub/Sub channel
+14. **Live delivery.** (Per-recipient only — see decision 27 for the separate feed-wide broadcast
+    channel.) Notification creation publishes a small event to a Redis Pub/Sub channel
     keyed per recipient (`forum-notifications:{user_id}`), from a dedicated `Redis.from_url(...)`
     connection rather than the app-wide cached `get_redis()` singleton. `GET
     /api/notifications/stream` is a Server-Sent Events endpoint that authenticates the caller,
@@ -346,6 +347,26 @@ grading.
     Ownership/privacy violations return `404`. Rate limits return `429` with `Retry-After`.
     Redis unavailability for a write path returns `503`. Oversized/invalid media returns `413`
     or `422` before any disk write.
+
+27. **Feed-wide live delivery (added after an audit pass).** Decision 14's per-recipient channel
+    only ever reaches a post/comment's own author, since it's keyed by `forum-notifications:
+    {user_id}` — it structurally cannot reach a bystander just browsing the feed, which the
+    grading guidelines' "no manual refresh" note also covers. `GET /api/forum/activity/stream`
+    adds a second, shared broadcast on its own `forum-activity` Redis Pub/Sub channel; every
+    connected feed viewer subscribes and re-fetches (feed, and the open report's comments if
+    affected) on any event rather than trusting the event body's contents. `MessagesPage`
+    similarly needed a live-open-thread update but does not need a third channel — it reuses the
+    existing per-recipient notification connection and reacts only to `new_dm` events, since that
+    channel already reaches the DM recipient.
+
+28. **Duplicate-submission protection.** Post and comment creation accept an optional
+    client-generated `Idempotency-Key` header. The insert is
+    `ON CONFLICT (author_user_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING
+    RETURNING ...` against a partial unique index (migration `0010_forum_idempotency_keys`); a
+    `NULL` `RETURNING` means another request with the same key already won, so the handler
+    re-selects that existing row instead of creating a triage job or notification a second time.
+    This is a database-level guarantee, not a disabled-submit-button client convention — it holds
+    even under two truly concurrent identical submissions, which a client-side guard cannot.
 
 ## Testing Decisions
 

@@ -485,14 +485,20 @@ without manual refresh — WebSocket or SSE from the web gateway.
 - [ ] Long-term memory: preference storage (tolls/highways) wired into Worker B's cost function.
 - [ ] Hazard-reporting forum: posts (text/image/video), anonymity toggle, comments, upvote/downvote, profile dashboard.
 - [ ] Cold-seeding script: fake users + historical hazard reports + comment threads.
-- [ ] Rate limiting + file-size caps on all forum/media endpoints.
+- [x] Rate limiting + file-size caps on all forum/media endpoints, including edit/delete (not
+      just create/vote) and account mutation (logout, profile update) — see
+      `docs/forum-feature-tickets.md` ticket 6.
 - [ ] Start unit + integration tests alongside each feature as it's built (not after).
 
 ### Phase 3 — Aug 2 → Aug 16
-- [ ] DMs (text/image/video) + live notifications (WebSocket/SSE) for DMs and vote/comment activity.
+- [x] DMs (text/image/video) + live notifications (SSE) for DMs, votes/comments, and the forum
+      feed itself — the feed and an open DM thread both update live over SSE with no manual
+      refresh, per the guidelines' explicit technical note.
 - [ ] LLM job queue: worker pool, fill-time heuristic/scheduling, hazard triage & dedup feature.
 - [ ] (Stretch) Route explanation LLM feature.
-- [ ] CI/CD: test suite gating, auto-deploy to Azure on green main.
+- [x] CI/CD: test suite gating (`grading-validation.yml`, every push/PR) + auto-deploy to Azure
+      on a green `master` (`deploy.yml`, now triggered automatically via `workflow_run` off
+      `grading-validation`'s success, not just manual `workflow_dispatch`).
 - [ ] `ENABLE_TEST_ENDPOINTS` gating for LLM/queue test hooks.
 
 ### Phase 4 — Aug 16 → Aug 23 (hardening + submission)
