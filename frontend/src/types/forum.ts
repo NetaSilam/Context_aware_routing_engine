@@ -81,6 +81,8 @@ export interface CommentPage {
 export interface DashboardSummary {
   post_count: number;
   comment_count: number;
+  total_upvotes_received: number;
+  total_downvotes_received: number;
   net_votes_received: number;
 }
 

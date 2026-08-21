@@ -14,6 +14,7 @@ from app.auth import (
     require_trusted_origin,
     verify_password,
 )
+from app.abuse_protection import enforce_action_rate_limit
 from app.auth_rate_limit import enforce_auth_rate_limit
 from app.config import get_settings
 from app.db import get_engine
@@ -157,8 +158,15 @@ async def login(payload: LoginRequest, request: Request, response: Response) -> 
     response_model=None,
     dependencies=[Depends(require_trusted_origin)],
 )
-async def logout(_: dict[str, Any] = Depends(get_current_user)) -> Response:
+async def logout(request: Request, user: dict[str, Any] = Depends(get_current_user)) -> Response:
     settings = get_settings()
+    await enforce_action_rate_limit(
+        "account-mutation",
+        request,
+        int(user["id"]),
+        user_limit=settings.account_mutation_user_rate_limit,
+        ip_limit=settings.account_mutation_ip_rate_limit,
+    )
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
     response.delete_cookie(
         key=settings.auth_cookie_name,
@@ -180,9 +188,18 @@ async def get_me(response: Response, user: dict[str, Any] = Depends(get_current_
 @router.patch("/me", response_model=UserProfile, dependencies=[Depends(require_trusted_origin)])
 async def update_me(
     payload: PreferencesUpdate,
+    request: Request,
     response: Response,
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
+    settings = get_settings()
+    await enforce_action_rate_limit(
+        "account-mutation",
+        request,
+        int(user["id"]),
+        user_limit=settings.account_mutation_user_rate_limit,
+        ip_limit=settings.account_mutation_ip_rate_limit,
+    )
     prevent_session_caching(response)
     updates = payload.model_dump(exclude_unset=True)
     if not updates:

@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     auth_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     signup_rate_limit: int = Field(default=5, ge=1, le=100)
     login_rate_limit: int = Field(default=10, ge=1, le=100)
+    account_mutation_user_rate_limit: int = Field(default=20, ge=1, le=1000)
+    account_mutation_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
     request_body_max_bytes: int = Field(default=16_384, ge=1024, le=1_048_576)
     request_query_max_bytes: int = Field(default=1024, ge=64, le=16_384)
     route_protection_window_seconds: int = Field(default=60, ge=1, le=3600)
@@ -96,6 +98,8 @@ class Settings(BaseSettings):
     forum_comment_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
     forum_vote_user_rate_limit: int = Field(default=60, ge=1, le=2000)
     forum_vote_ip_rate_limit: int = Field(default=180, ge=1, le=10_000)
+    forum_mutation_user_rate_limit: int = Field(default=20, ge=1, le=1000)
+    forum_mutation_ip_rate_limit: int = Field(default=60, ge=1, le=5000)
     forum_media_storage_path: Path = Field(default=Path("/data/forum-media"))
     forum_media_max_image_bytes: int = Field(default=5_000_000, ge=1024, le=50_000_000)
     forum_media_max_video_bytes: int = Field(default=25_000_000, ge=1024, le=200_000_000)
@@ -184,6 +188,10 @@ class Settings(BaseSettings):
             raise ValueError("forum comment per-user limit cannot exceed the per-IP limit")
         if self.forum_vote_user_rate_limit > self.forum_vote_ip_rate_limit:
             raise ValueError("forum vote per-user limit cannot exceed the per-IP limit")
+        if self.forum_mutation_user_rate_limit > self.forum_mutation_ip_rate_limit:
+            raise ValueError("forum mutation per-user limit cannot exceed the per-IP limit")
+        if self.account_mutation_user_rate_limit > self.account_mutation_ip_rate_limit:
+            raise ValueError("account mutation per-user limit cannot exceed the per-IP limit")
         if self.forum_media_upload_user_rate_limit > self.forum_media_upload_ip_rate_limit:
             raise ValueError("forum media upload per-user limit cannot exceed the per-IP limit")
         if self.dm_send_user_rate_limit > self.dm_send_ip_rate_limit:

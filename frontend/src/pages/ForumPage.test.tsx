@@ -4,6 +4,24 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import ForumPage from "./ForumPage";
 
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  url: string;
+  closed = false;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   cleanup();
@@ -13,7 +31,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-const dashboard = { post_count: 1, comment_count: 0, net_votes_received: 2 };
+const dashboard = { post_count: 1, comment_count: 0, total_upvotes_received: 3, total_downvotes_received: 1, net_votes_received: 2 };
 
 const post = {
   id: "11111111-1111-1111-1111-111111111111",
@@ -59,7 +77,9 @@ describe("ForumPage", () => {
     const { container } = render(<ForumPage />);
 
     expect(await screen.findByText("Deep pothole on Route 4")).toBeTruthy();
-    expect(await screen.findByText(/Net votes received: 2/)).toBeTruthy();
+    expect(await screen.findByText(/3 upvotes/)).toBeTruthy();
+    expect(screen.getByText(/1 downvotes received/)).toBeTruthy();
+    expect(screen.getByText(/Net votes: 2/)).toBeTruthy();
     expect(screen.getByText(/reporter@example.com/)).toBeTruthy();
     // Scoped to the feed item's own classes, not a page-wide text search — the hero banner's
     // own "AI-classified severity" feature chip also contains the word "severity".
@@ -577,5 +597,42 @@ describe("ForumPage", () => {
     expect(await screen.findByText("Wide and deep, watch out.")).toBeTruthy();
     expect(screen.getByText("🤖 AI: Medium severity")).toBeTruthy();
     expect(screen.getByText(`🤖 AI: possible duplicate of "Pothole on Route 4 (older report)"`)).toBeTruthy();
+  });
+
+  it("refetches the feed when a forum-activity broadcast arrives, without a manual refresh", async () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    const fetchMock = baseFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ForumPage />);
+    await screen.findByText("Deep pothole on Route 4");
+
+    const feedCallsBefore = fetchMock.mock.calls.filter(([url]) =>
+      String(url).startsWith("/api/forum/posts?"),
+    ).length;
+
+    const source = MockEventSource.instances[0];
+    expect(source.url).toBe("/api/forum/activity/stream");
+    source.onmessage?.({ data: JSON.stringify({ kind: "post_created", payload: {} }) });
+
+    await waitFor(() => {
+      const feedCallsAfter = fetchMock.mock.calls.filter(([url]) =>
+        String(url).startsWith("/api/forum/posts?"),
+      ).length;
+      expect(feedCallsAfter).toBeGreaterThan(feedCallsBefore);
+    });
+  });
+
+  it("closes the forum-activity stream connection on unmount", async () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal("EventSource", MockEventSource);
+    vi.stubGlobal("fetch", baseFetchMock());
+    const view = render(<ForumPage />);
+    await screen.findByText("Deep pothole on Route 4");
+
+    const source = MockEventSource.instances[0];
+    view.unmount();
+
+    expect(source.closed).toBe(true);
   });
 });

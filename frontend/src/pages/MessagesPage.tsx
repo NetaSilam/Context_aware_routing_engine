@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { NOTIFICATIONS_STREAM_URL } from "../api/notifications";
 import { getConversation, listConversations, sendMessage } from "../api/messages";
 import ConversationList from "../components/messages/ConversationList";
 import ConversationThread from "../components/messages/ConversationThread";
@@ -66,6 +67,35 @@ export default function MessagesPage(props: MessagesPageProps): JSX.Element {
     props.onInitialTargetConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.initialTarget]);
+
+  const selectedUserIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    selectedUserIdRef.current = selectedUserId;
+  }, [selectedUserId]);
+
+  // A message arriving while its conversation is open must appear without the user closing
+  // and reopening the thread. The notification stream already reaches this recipient in real
+  // time (it's how the header badge updates); this reuses that same connection rather than
+  // opening a second one, and reacts only to the one kind relevant here.
+  useEffect(() => {
+    const source = new EventSource(NOTIFICATIONS_STREAM_URL, { withCredentials: true });
+    source.onmessage = (event) => {
+      let parsed: { kind?: string; payload?: { sender_user_id?: number } } = {};
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (parsed.kind !== "new_dm") return;
+      if (parsed.payload?.sender_user_id === selectedUserIdRef.current) {
+        void openConversation(selectedUserIdRef.current);
+      } else {
+        void loadConversations();
+      }
+    };
+    return () => source.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function closeConversation() {
     setSelectedUserId(null);

@@ -77,10 +77,13 @@ export async function getPost(postId: string): Promise<PostDetail> {
   return request<PostDetail>(`/api/forum/posts/${encodeURIComponent(postId)}`);
 }
 
-export async function createPost(payload: CreatePostRequest): Promise<PostDetail> {
+export async function createPost(
+  payload: CreatePostRequest,
+  idempotencyKey: string,
+): Promise<PostDetail> {
   return request<PostDetail>("/api/forum/posts", {
     method: "POST",
-    headers: mutationHeaders(),
+    headers: mutationHeaders({ "Idempotency-Key": idempotencyKey }),
     body: JSON.stringify(payload),
   });
 }
@@ -110,10 +113,11 @@ export async function listComments(postId: string, offset = 0, limit = 30): Prom
 export async function createComment(
   postId: string,
   payload: CreateCommentRequest,
+  idempotencyKey: string,
 ): Promise<CommentItem> {
   return request<CommentItem>(`/api/forum/posts/${encodeURIComponent(postId)}/comments`, {
     method: "POST",
-    headers: mutationHeaders(),
+    headers: mutationHeaders({ "Idempotency-Key": idempotencyKey }),
     body: JSON.stringify(payload),
   });
 }
@@ -177,3 +181,5 @@ export async function uploadCommentMedia(commentId: string, file: File): Promise
 export function mediaUrl(mediaId: string): string {
   return `/api/forum/media/${encodeURIComponent(mediaId)}`;
 }
+
+export const FORUM_ACTIVITY_STREAM_URL = "/api/forum/activity/stream";

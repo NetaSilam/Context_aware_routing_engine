@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
+  FORUM_ACTIVITY_STREAM_URL,
   createComment,
   createPost,
   deletePost as deletePostRequest,
@@ -17,6 +18,7 @@ import PostDetailPanel from "../components/forum/PostDetailPanel";
 import PostForm from "../components/forum/PostForm";
 import PostList from "../components/forum/PostList";
 import { applyVote } from "../lib/applyVote";
+import { createIdempotencyKey } from "../lib/idempotencyKey";
 import type { CommentItem, DashboardSummary, HazardType, PostDetail, PostSummary, VoteValue } from "../types/forum";
 
 const PAGE_SIZE = 20;
@@ -97,6 +99,34 @@ export default function ForumPage(props: ForumPageProps): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hazardType]);
 
+  const selectedPostIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedPostIdRef.current = selectedPost?.id ?? null;
+  }, [selectedPost]);
+
+  // The feed and an open report's comments must update live for every viewer, not just the
+  // report's own author/participants — a personal notification wouldn't reach a bystander just
+  // browsing the feed. This subscribes to the shared forum-activity broadcast (distinct from the
+  // per-user notification stream) and re-fetches whatever the event says changed.
+  useEffect(() => {
+    const source = new EventSource(FORUM_ACTIVITY_STREAM_URL, { withCredentials: true });
+    source.onmessage = (event) => {
+      let parsed: { kind?: string; payload?: { post_id?: string } } = {};
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      void loadFeed(hazardType);
+      const affectedPostId = parsed.payload?.post_id;
+      if (affectedPostId && affectedPostId === selectedPostIdRef.current) {
+        void openPost(affectedPostId);
+      }
+    };
+    return () => source.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hazardType]);
+
   async function handleFilterChange(next: HazardType | "") {
     setHazardType(next);
   }
@@ -112,7 +142,7 @@ export default function ForumPage(props: ForumPageProps): JSX.Element {
   }
 
   async function handleCreatePost(payload: Parameters<typeof createPost>[0], files: File[]) {
-    const created = await createPost(payload);
+    const created = await createPost(payload, createIdempotencyKey());
     let thumbnailMediaId: string | null = null;
     for (const file of files) {
       const uploaded = await uploadPostMedia(created.id, file);
@@ -199,7 +229,11 @@ export default function ForumPage(props: ForumPageProps): JSX.Element {
 
   async function handleAddComment(body: string, isAnonymous: boolean, files: File[]) {
     if (!selectedPost) return;
-    const created = await createComment(selectedPost.id, { body, is_anonymous: isAnonymous });
+    const created = await createComment(
+      selectedPost.id,
+      { body, is_anonymous: isAnonymous },
+      createIdempotencyKey(),
+    );
     let media = created.media;
     for (const file of files) {
       const uploaded = await uploadCommentMedia(created.id, file);
@@ -242,8 +276,9 @@ export default function ForumPage(props: ForumPageProps): JSX.Element {
           </ul>
           {dashboard ? (
             <p className="forum-feed__meta">
-              Your reports: {dashboard.post_count} · Your comments: {dashboard.comment_count} · Net
-              votes received: {dashboard.net_votes_received}
+              Your reports: {dashboard.post_count} · Your comments: {dashboard.comment_count} ·{" "}
+              {dashboard.total_upvotes_received} upvotes · {dashboard.total_downvotes_received}{" "}
+              downvotes received · Net votes: {dashboard.net_votes_received}
             </p>
           ) : null}
         </div>

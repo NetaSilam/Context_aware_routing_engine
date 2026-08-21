@@ -11,6 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 _CHANNEL_PREFIX = "forum-notifications"
 
+# Unlike the per-recipient channels above (one viewer, their own notifications), this single
+# channel is broadcast to every connected viewer: the forum feed and an open report's comments
+# must update live for anyone looking at them, not just the post's own author/participants (the
+# "no manual refresh" requirement covers the shared feed, not just a personal inbox).
+FORUM_ACTIVITY_CHANNEL = "forum-activity"
+
 
 def notification_channel(recipient_user_id: int) -> str:
     return f"{_CHANNEL_PREFIX}:{recipient_user_id}"
@@ -59,3 +65,12 @@ async def publish_notification(redis: Redis, notification: dict[str, Any] | None
         "created_at": notification["created_at"].isoformat(),
     }
     await redis.publish(notification_channel(notification["recipient_user_id"]), json.dumps(event))
+
+
+async def publish_forum_activity(redis: Redis, *, kind: str, payload: dict[str, Any]) -> None:
+    """Broadcasts a lightweight "something changed" event to every connected forum viewer.
+    Deliberately carries just enough to decide what to re-fetch (never the full post/comment
+    body), so a viewer with a stale feed always re-reads the current row rather than trusting
+    whatever this event happened to contain."""
+    event = {"kind": kind, "payload": payload}
+    await redis.publish(FORUM_ACTIVITY_CHANNEL, json.dumps(event))

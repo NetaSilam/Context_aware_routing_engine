@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from redis.asyncio import Redis
 from sqlalchemy import Text, bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -17,7 +20,12 @@ from app.config import get_settings
 from app.db import get_engine
 from app.forum.media_storage import classify_and_validate_media, read_media_file, write_media_file
 from app.llm.service import create_llm_job, enqueue_llm_job
-from app.notifications.service import create_notification, publish_notification
+from app.notifications.service import (
+    FORUM_ACTIVITY_CHANNEL,
+    create_notification,
+    publish_forum_activity,
+    publish_notification,
+)
 from app.redis_client import get_redis
 from app.request_bounds import reject_unexpected_query_parameters
 
@@ -137,6 +145,8 @@ class CommentPage(BaseModel):
 class DashboardSummary(BaseModel):
     post_count: int
     comment_count: int
+    total_upvotes_received: int
+    total_downvotes_received: int
     net_votes_received: int
 
 
@@ -267,6 +277,7 @@ async def create_post(
     payload: PostCreate,
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
+    idempotency_key: Annotated[UUID | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     await enforce_action_rate_limit(
@@ -280,16 +291,23 @@ async def create_post(
     llm_job: dict[str, Any] | None = None
     try:
         async with get_engine().begin() as connection:
-            row = (
+            # A fast double-click (or a client's own retry-on-timeout) resubmits the same
+            # Idempotency-Key: ON CONFLICT DO NOTHING against the partial unique index makes a
+            # concurrent duplicate a no-op at the database level rather than a race the app has
+            # to detect itself, and the RETURNING-is-empty branch below re-fetches the row the
+            # other request actually created instead of creating a second one.
+            inserted = (
                 await connection.execute(
                     text(
                         """
                         INSERT INTO app.forum_posts
                             (id, author_user_id, is_anonymous, hazard_type, title, body,
-                             longitude, latitude)
+                             longitude, latitude, idempotency_key)
                         VALUES
                             (:id, :author_user_id, :is_anonymous, :hazard_type, :title, :body,
-                             :longitude, :latitude)
+                             :longitude, :latitude, :idempotency_key)
+                        ON CONFLICT (author_user_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+                        DO NOTHING
                         RETURNING id, author_user_id, is_anonymous, hazard_type, title, body,
                                   longitude, latitude, upvote_count, downvote_count,
                                   comment_count, llm_hazard_type_suggested, llm_severity,
@@ -305,12 +323,31 @@ async def create_post(
                         "body": payload.body,
                         "longitude": payload.longitude,
                         "latitude": payload.latitude,
+                        "idempotency_key": idempotency_key,
                     },
                 )
-            ).mappings().one()
-            llm_job = await create_llm_job(
-                connection, kind="triage", subject_post_id=post_id, input_chars=len(payload.body)
-            )
+            ).mappings().first()
+            if inserted is not None:
+                row = inserted
+                llm_job = await create_llm_job(
+                    connection, kind="triage", subject_post_id=post_id, input_chars=len(payload.body)
+                )
+            else:
+                row = (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT id, author_user_id, is_anonymous, hazard_type, title, body,
+                                   longitude, latitude, upvote_count, downvote_count,
+                                   comment_count, llm_hazard_type_suggested, llm_severity,
+                                   duplicate_of_post_id, created_at, updated_at
+                            FROM app.forum_posts
+                            WHERE author_user_id = :author_user_id AND idempotency_key = :idempotency_key
+                            """
+                        ),
+                        {"author_user_id": user["id"], "idempotency_key": idempotency_key},
+                    )
+                ).mappings().one()
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
     if llm_job is not None:
@@ -321,6 +358,16 @@ async def create_post(
             # committed successfully. A broker outage at this exact instant must never turn a
             # successful creation into an error response — the job row simply stays 'queued'
             # rather than ever running; classification is enrichment, not load-bearing.
+            pass
+    if inserted is not None:
+        # Best-effort, same fail-open reasoning as the LLM enqueue above: a Redis blip here
+        # must never turn an already-committed post into an error response, and a replayed
+        # idempotent submission must never re-announce a post other viewers already saw.
+        try:
+            await publish_forum_activity(
+                get_redis(), kind="post_created", payload={"post_id": str(post_id)}
+            )
+        except Exception:
             pass
     return _serialize_post(
         {**row, "author_email": user["email"], "my_vote_value": None}, int(user["id"]), media=[]
@@ -506,10 +553,19 @@ async def get_post(
 async def update_post(
     post_id: UUID,
     payload: PostUpdate,
+    request: Request,
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
-    updates = payload.model_dump(exclude_unset=True)
+    settings = get_settings()
     viewer_id = int(user["id"])
+    await enforce_action_rate_limit(
+        "forum-mutation",
+        request,
+        viewer_id,
+        user_limit=settings.forum_mutation_user_rate_limit,
+        ip_limit=settings.forum_mutation_ip_rate_limit,
+    )
+    updates = payload.model_dump(exclude_unset=True)
     try:
         async with get_engine().begin() as connection:
             owned = (
@@ -561,8 +617,17 @@ async def update_post(
 @router.delete("/posts/{post_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_trusted_origin)])
 async def delete_post(
     post_id: UUID,
+    request: Request,
     user: dict[str, Any] = Depends(get_current_user),
 ) -> Response:
+    settings = get_settings()
+    await enforce_action_rate_limit(
+        "forum-mutation",
+        request,
+        int(user["id"]),
+        user_limit=settings.forum_mutation_user_rate_limit,
+        ip_limit=settings.forum_mutation_ip_rate_limit,
+    )
     try:
         async with get_engine().begin() as connection:
             updated = await connection.execute(
@@ -592,6 +657,7 @@ async def create_comment(
     payload: CommentCreate,
     request: Request,
     user: dict[str, Any] = Depends(get_current_user),
+    idempotency_key: Annotated[UUID | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     await enforce_action_rate_limit(
@@ -606,12 +672,17 @@ async def create_comment(
     try:
         async with get_engine().begin() as connection:
             post = await _get_active_post_or_404(connection, post_id)
-            row = (
+            # Same ON-CONFLICT-DO-NOTHING replay pattern as create_post: a fast double-click
+            # must not double-increment comment_count or send a second notification.
+            inserted = (
                 await connection.execute(
                     text(
                         """
-                        INSERT INTO app.forum_comments (id, post_id, author_user_id, is_anonymous, body)
-                        VALUES (:id, :post_id, :author_user_id, :is_anonymous, :body)
+                        INSERT INTO app.forum_comments
+                            (id, post_id, author_user_id, is_anonymous, body, idempotency_key)
+                        VALUES (:id, :post_id, :author_user_id, :is_anonymous, :body, :idempotency_key)
+                        ON CONFLICT (author_user_id, idempotency_key) WHERE idempotency_key IS NOT NULL
+                        DO NOTHING
                         RETURNING id, post_id, author_user_id, is_anonymous, body,
                                   upvote_count, downvote_count, created_at, updated_at
                         """
@@ -622,29 +693,55 @@ async def create_comment(
                         "author_user_id": user["id"],
                         "is_anonymous": payload.is_anonymous,
                         "body": payload.body,
+                        "idempotency_key": idempotency_key,
                     },
                 )
-            ).mappings().one()
-            await connection.execute(
-                text(
-                    "UPDATE app.forum_posts SET comment_count = comment_count + 1, updated_at = now() WHERE id = :id"
-                ),
-                {"id": post_id},
-            )
-            notification = await create_notification(
-                connection,
-                recipient_user_id=int(post["author_user_id"]),
-                actor_user_id=int(user["id"]),
-                kind="new_comment",
-                payload={
-                    "post_id": str(post_id),
-                    "comment_id": str(comment_id),
-                    "actor_label": None if payload.is_anonymous else user["email"],
-                },
-            )
+            ).mappings().first()
+            if inserted is not None:
+                row = inserted
+                await connection.execute(
+                    text(
+                        "UPDATE app.forum_posts SET comment_count = comment_count + 1, updated_at = now() WHERE id = :id"
+                    ),
+                    {"id": post_id},
+                )
+                notification = await create_notification(
+                    connection,
+                    recipient_user_id=int(post["author_user_id"]),
+                    actor_user_id=int(user["id"]),
+                    kind="new_comment",
+                    payload={
+                        "post_id": str(post_id),
+                        "comment_id": str(comment_id),
+                        "actor_label": None if payload.is_anonymous else user["email"],
+                    },
+                )
+            else:
+                row = (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT id, post_id, author_user_id, is_anonymous, body,
+                                   upvote_count, downvote_count, created_at, updated_at
+                            FROM app.forum_comments
+                            WHERE author_user_id = :author_user_id AND idempotency_key = :idempotency_key
+                            """
+                        ),
+                        {"author_user_id": user["id"], "idempotency_key": idempotency_key},
+                    )
+                ).mappings().one()
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
     await publish_notification(get_redis(), notification)
+    if inserted is not None:
+        try:
+            await publish_forum_activity(
+                get_redis(),
+                kind="comment_created",
+                payload={"post_id": str(post_id), "comment_id": str(comment_id)},
+            )
+        except Exception:
+            pass
     return _serialize_comment(
         {**row, "author_email": user["email"], "my_vote_value": None}, int(user["id"])
     )
@@ -705,9 +802,18 @@ async def list_comments(
 async def update_comment(
     comment_id: UUID,
     payload: CommentUpdate,
+    request: Request,
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
+    settings = get_settings()
     viewer_id = int(user["id"])
+    await enforce_action_rate_limit(
+        "forum-mutation",
+        request,
+        viewer_id,
+        user_limit=settings.forum_mutation_user_rate_limit,
+        ip_limit=settings.forum_mutation_ip_rate_limit,
+    )
     try:
         async with get_engine().begin() as connection:
             owned = (
@@ -751,8 +857,17 @@ async def update_comment(
 @router.delete("/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_trusted_origin)])
 async def delete_comment(
     comment_id: UUID,
+    request: Request,
     user: dict[str, Any] = Depends(get_current_user),
 ) -> Response:
+    settings = get_settings()
+    await enforce_action_rate_limit(
+        "forum-mutation",
+        request,
+        int(user["id"]),
+        user_limit=settings.forum_mutation_user_rate_limit,
+        ip_limit=settings.forum_mutation_ip_rate_limit,
+    )
     try:
         async with get_engine().begin() as connection:
             row = (
@@ -888,6 +1003,14 @@ async def vote_on_post(
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
     await publish_notification(get_redis(), notification)
+    try:
+        await publish_forum_activity(
+            get_redis(),
+            kind="vote_changed",
+            payload={"target_type": "post", "post_id": str(post_id)},
+        )
+    except Exception:
+        pass
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -942,6 +1065,14 @@ async def vote_on_comment(
     except SQLAlchemyError as exc:
         raise _service_unavailable("The forum service is temporarily unavailable.") from exc
     await publish_notification(get_redis(), notification)
+    try:
+        await publish_forum_activity(
+            get_redis(),
+            kind="vote_changed",
+            payload={"target_type": "comment", "post_id": str(comment_row["post_id"])},
+        )
+    except Exception:
+        pass
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -958,6 +1089,18 @@ async def get_my_dashboard(user: dict[str, Any] = Depends(get_current_user)) -> 
                              WHERE author_user_id = :user_id AND status = 'active') AS post_count,
                             (SELECT COUNT(*) FROM app.forum_comments
                              WHERE author_user_id = :user_id AND status = 'active') AS comment_count,
+                            (SELECT COALESCE(SUM(upvote_count), 0) FROM app.forum_posts
+                             WHERE author_user_id = :user_id AND status = 'active')
+                            +
+                            (SELECT COALESCE(SUM(upvote_count), 0) FROM app.forum_comments
+                             WHERE author_user_id = :user_id AND status = 'active')
+                            AS total_upvotes_received,
+                            (SELECT COALESCE(SUM(downvote_count), 0) FROM app.forum_posts
+                             WHERE author_user_id = :user_id AND status = 'active')
+                            +
+                            (SELECT COALESCE(SUM(downvote_count), 0) FROM app.forum_comments
+                             WHERE author_user_id = :user_id AND status = 'active')
+                            AS total_downvotes_received,
                             (SELECT COALESCE(SUM(upvote_count - downvote_count), 0)
                              FROM app.forum_posts
                              WHERE author_user_id = :user_id AND status = 'active')
@@ -1163,3 +1306,38 @@ async def get_media(media_id: UUID, user: dict[str, Any] = Depends(get_current_u
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Media not found.")
     data = await asyncio.to_thread(read_media_file, settings, row["storage_key"])
     return Response(content=data, media_type=row["content_type"])
+
+
+@router.get("/activity/stream")
+async def stream_forum_activity(
+    request: Request, _: dict[str, Any] = Depends(get_current_user)
+) -> StreamingResponse:
+    """Broadcasts new-post/new-comment/vote-changed events to every connected viewer, so the
+    feed and an open report's comments update live instead of requiring a manual refresh.
+    Mirrors app/notifications/routes.py's per-user stream, but on the single shared
+    FORUM_ACTIVITY_CHANNEL rather than a recipient-scoped one."""
+
+    async def event_generator() -> AsyncIterator[str]:
+        redis = Redis.from_url(str(get_settings().redis_url), decode_responses=True)
+        pubsub = redis.pubsub()
+        await pubsub.subscribe(FORUM_ACTIVITY_CHANNEL)
+        try:
+            yield "event: ready\ndata: {}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=15.0)
+                if message is not None and message.get("type") == "message":
+                    yield f"data: {message['data']}\n\n"
+                else:
+                    yield ": keep-alive\n\n"
+        finally:
+            await pubsub.unsubscribe(FORUM_ACTIVITY_CHANNEL)
+            await pubsub.aclose()
+            await redis.aclose()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )

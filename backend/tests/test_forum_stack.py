@@ -271,4 +271,6 @@ def test_dashboard_reports_counts_and_net_votes_received() -> None:
     body = dashboard.json()
     assert body["post_count"] == 1
     assert body["comment_count"] == 1
+    assert body["total_upvotes_received"] == 1
+    assert body["total_downvotes_received"] == 0
     assert body["net_votes_received"] == 1
