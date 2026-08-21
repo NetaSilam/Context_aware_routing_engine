@@ -6,7 +6,7 @@ drivers live with turn-by-turn navigation and automatic rerouting, and lets the 
 report and discuss road hazards in a moderated forum - all personalized to each driver's
 profile. 
 
-**Live deployment:** http://sweng-group-14.eastus.cloudapp.azure.com/ (the Azure VM must be
+**Live deployment:** https://sweng-group-14.eastus.cloudapp.azure.com/ (the Azure VM must be
 powered on; see [Deploying to Azure](#deploying-to-azure) below).
 
 ## Features
@@ -117,14 +117,24 @@ automatically on every push via `.github/workflows/grading-validation.yml`.
 
 ## Deploying to Azure
 
-The production site runs as the same Compose stack (`--env-file .env.real`) on a single Azure
-VM, fronted by Nginx on port 80. To deploy the current `master` (or any branch):
+The production site runs as the same Compose stack (`--env-file .env.real -f compose.yaml -f
+compose.real.yaml`) on a single Azure VM. `compose.real.yaml` adds a Caddy reverse proxy in
+front of the frontend's Nginx; Caddy terminates real HTTPS (an auto-renewed Let's Encrypt
+certificate for the VM's domain) and forwards plaintext to Nginx over the internal Compose
+network, so the auth cookie can be marked `Secure` in production. Local dev and the test stack
+use `compose.yaml` alone and stay plain HTTP.
 
-1. Make sure the VM is powered on (Azure Portal).
-2. From the repository's **Actions** tab, run the **deploy** workflow (`workflow_dispatch`) -
-   any collaborator can trigger it. It pulls the selected branch onto the VM, rebuilds and
-   restarts the stack, and fails the run if the site or its `/api` proxy doesn't come back
-   healthy within about three minutes.
+Deployment is automatic: every push to `master` that passes `grading-validation` triggers the
+**deploy** workflow. It can also be run by hand from the **Actions** tab
+(`workflow_dispatch`) to redeploy the current `master` without a new push. Either way it:
+
+1. Requires the VM to be powered on (Azure Portal) - the workflow does not start it.
+2. Pulls the selected branch onto the VM, rebuilds and restarts the stack, and fails the run if
+   the site or its `/api` proxy doesn't come back healthy within about three minutes.
+
+**One-time prerequisite:** the VM's Azure Network Security Group must allow inbound TCP 443 (80
+is needed too, for the ACME HTTP-01 challenge Caddy uses to obtain the certificate) - without
+it, Caddy can never reach Let's Encrypt and the health check above will fail.
 
 The workflow (`.github/workflows/deploy.yml`) authenticates over SSH with a dedicated,
 read-only-scoped deploy key (distinct from any collaborator's personal key) and reconstructs

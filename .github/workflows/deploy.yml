@@ -2,6 +2,12 @@ name: deploy
 
 on:
   workflow_dispatch:
+  # Fires whenever grading-validation finishes on master - success or failure - so the job
+  # below must gate on conclusion itself; only a passing run should ever reach production.
+  workflow_run:
+    workflows: ["grading-validation"]
+    types: [completed]
+    branches: [master]
 
 concurrency:
   group: deploy-production
@@ -9,8 +15,15 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      # workflow_run's own github.ref_name is the workflow FILE's ref (the repo default
+      # branch), not the branch that finished grading-validation - use head_branch instead
+      # when present. workflow_dispatch has no workflow_run context, so ref_name is correct
+      # there (the branch the user picked when triggering manually).
+      DEPLOY_REF: ${{ github.event.workflow_run.head_branch || github.ref_name }}
     steps:
       - name: Set up SSH
         run: |
@@ -34,15 +47,15 @@ jobs:
           FOUNDATION_DATA_CHECKSUM=c3d6e0eeec723a139917f19a53cca2ee2ab7701aa1e75578870d52b10eb9a45c
           RISK_DATA_VERSION=national-risk-2026-08-01
           JWT_SECRET=${{ secrets.JWT_SECRET }}
-          AUTH_ALLOWED_ORIGIN=http://${{ secrets.VM_HOST }}
-          AUTH_COOKIE_SECURE=false
+          AUTH_ALLOWED_ORIGIN=https://${{ secrets.VM_HOST }}
+          AUTH_COOKIE_SECURE=true
+          SITE_DOMAIN=${{ secrets.VM_HOST }}
           OSRM_BASE_URL=http://osrm:5000/
           EXPECTED_OSRM_GRAPH_VERSION=israel-palestine-2026-07-31-osrm-6.0.0-profile-v1
           OSRM_DEPLOYMENT_MANIFEST_PATH=/osrm/deployment-compatibility.json
           OSRM_COMPATIBILITY_REQUIRED=true
           GEOCODER_BASE_URL=https://nominatim.openstreetmap.org/search
           GEOCODER_USER_AGENT=sa-bracha-course-project/1.0 (azure-vm; contact netasilam2001@gmail.com)
-          FRONTEND_PORT=80
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           EOF
 
@@ -58,23 +71,24 @@ jobs:
               set -e
               cd ~/Context_aware_routing_engine
               git fetch origin
-              git checkout "${{ github.ref_name }}"
-              git reset --hard "origin/${{ github.ref_name }}"
+              git checkout "${{ env.DEPLOY_REF }}"
+              git reset --hard "origin/${{ env.DEPLOY_REF }}"
               chmod 600 .env.real
-              docker compose --env-file .env.real up -d --build
+              docker compose --env-file .env.real -f compose.yaml -f compose.real.yaml up -d --build
             '
 
       - name: Verify the site is healthy
         run: |
           # curl's own connection-failure exit code (e.g. "Connection refused" while the
-          # frontend container is still starting) would otherwise abort this whole script
-          # immediately under bash -e, defeating the retry loop below. `|| echo 000` turns
-          # a failed connection into a plain non-200 code so the loop just retries instead.
+          # frontend container is still starting, or while Caddy is still obtaining its
+          # certificate) would otherwise abort this whole script immediately under bash -e,
+          # defeating the retry loop below. `|| echo 000` turns a failed connection into a
+          # plain non-200 code so the loop just retries instead.
           for i in $(seq 1 20); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.VM_HOST }}/" || echo 000)
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://${{ secrets.VM_HOST }}/" || echo 000)
             if [ "$code" = "200" ]; then
               echo "Frontend is up (HTTP $code)"
-              api_code=$(curl -s -o /dev/null -w "%{http_code}" "http://${{ secrets.VM_HOST }}/api/auth/me" || echo 000)
+              api_code=$(curl -s -o /dev/null -w "%{http_code}" "https://${{ secrets.VM_HOST }}/api/auth/me" || echo 000)
               if [ "$api_code" = "401" ]; then
                 echo "API proxy is responding correctly (HTTP $api_code)"
                 exit 0

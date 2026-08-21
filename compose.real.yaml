@@ -1,0 +1,29 @@
+services:
+  # Caddy terminates real HTTPS (Let's Encrypt, auto-renewed) at the domain and forwards
+  # plaintext to the frontend's existing nginx over the internal Compose network, so the
+  # frontend container itself needs no changes. Only this file adds Caddy - the base
+  # compose.yaml (used unmodified by local dev and the test stack) stays HTTP-only.
+  frontend:
+    ports: !reset []
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2.9-alpine
+    depends_on:
+      frontend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?Set SITE_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
