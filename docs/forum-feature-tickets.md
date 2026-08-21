@@ -127,7 +127,7 @@ conversation pair.
 **Blocked by:** 1. Add forum/messaging/notification schema; 3. Add forum/comment media upload
 and retrieval (reuses its storage/validation path for message attachments).
 
-**Status:** done (`backend/app/messaging/routes.py`, `frontend/src/pages/InboxPage.tsx`)
+**Status:** done (`backend/app/messaging/routes.py`, `frontend/src/pages/MessagesPage.tsx`)
 
 - [x] `POST /api/messages/{recipient_user_id}` creates a message with optional body and/or one
       media attachment reusing ticket 3's storage and validation, as a single multipart request
@@ -304,7 +304,7 @@ feed.
 **Blocked by:** 2. Deliver the core hazard-report feed; 3. Add forum/comment media upload and
 retrieval; 4. Deliver direct messaging; 5. Deliver live notifications over Server-Sent Events.
 
-**Status:** done (`frontend/src/pages/ForumPage.tsx`, `frontend/src/pages/InboxPage.tsx`)
+**Status:** done (`frontend/src/pages/ForumPage.tsx`, `frontend/src/pages/MessagesPage.tsx`)
 
 - [x] `ForumPage.tsx` renders the paged, filterable feed, a post-creation form (title, body,
       hazard type, location, anonymity toggle, media picker), post detail with comments, and
@@ -314,8 +314,13 @@ retrieval; 4. Deliver direct messaging; 5. Deliver live notifications over Serve
       `-90..90` bounds) plus a "Use my current location" button backed by
       `navigator.geolocation`, wired straight into the existing `CreatePostRequest.longitude`/
       `.latitude` fields that were already plumbed through the API client but had no form control.
-- [x] `InboxPage.tsx` renders the conversation list and an open thread with message composition,
-      media attachment, and read-state display — confirmed complete on audit, no changes needed.
+- [x] `MessagesPage.tsx` (originally `InboxPage.tsx`) renders the conversation list and an open
+      thread with message composition, media attachment, and read-state display. An unrelated later
+      cleanup pass removed this page's nav tab entirely, silently deleting the whole frontend (page,
+      components, API client, types) along with it and leaving the feature backend-only; it was
+      rebuilt under the new name, this time entered only from existing context — a "Message" button
+      on a non-anonymous post, or clicking a "new message" notification — rather than the original's
+      raw numeric-user-ID entry field, which was the actual reason it read as unusable.
 - [x] Both pages are added to the existing `PageSwitcher`/`App.tsx` gated-by-login shell.
 - [x] The session header shows a live-updating unread-notification indicator fed by the SSE
       connection established once per signed-in session.
@@ -325,7 +330,7 @@ retrieval; 4. Deliver direct messaging; 5. Deliver live notifications over Serve
       thread rendering, and notification indicator updates. Paging, hazard-type filtering, the new
       location field, and a required-field validation test were missing on audit and added to
       `ForumPage.test.tsx` (now 9 tests); DM thread rendering and notification indicator updates
-      were already covered by `InboxPage.test.tsx`/`NotificationIndicator.test.tsx`. Also fixed a
+      were already covered by `MessagesPage.test.tsx`/`NotificationIndicator.test.tsx`. Also fixed a
       pre-existing production-build break (`tsc -b` — which typechecks test files too, unlike
       `vitest run` — failed on an unused mock parameter in `NotificationIndicator.test.tsx`) found
       while rebuilding the frontend container to verify the location field end-to-end against the

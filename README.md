@@ -32,6 +32,9 @@ powered on; see [Deploying to Azure](#deploying-to-azure) below).
   clearly labeled as AI-generated and never presented as verified fact - see
   [`docs/FORUM_FEATURE_PRD.md`](docs/FORUM_FEATURE_PRD.md) and
   [`docs/LLM_FEATURE_PRD.md`](docs/LLM_FEATURE_PRD.md).
+- **Direct messaging.** A "Message" button on any non-anonymous hazard report opens a private,
+  one-on-one conversation with its author (text and photo/video attachments); new messages
+  arrive as a live notification that jumps straight to that conversation when clicked.
 - **Accident-attribution explorer.** Read-only page for inspecting the
   underlying prepared accident and road-network data the risk scoring is built on.
 

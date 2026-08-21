@@ -312,13 +312,17 @@ grading.
     from cold-seeded-vs-real distinctions the grader may want to check.
 
 22. **Frontend structure.** New pages `frontend/src/pages/ForumPage.tsx` (feed, post
-    creation/detail, comments, voting) and `frontend/src/pages/InboxPage.tsx` (DM conversation
+    creation/detail, comments, voting) and `frontend/src/pages/MessagesPage.tsx` (DM conversation
     list and thread), new components under `frontend/src/components/forum/` and
     `frontend/src/components/messages/`, typed clients `frontend/src/api/forum.ts`,
     `frontend/src/api/messages.ts`, `frontend/src/api/notifications.ts`, and corresponding types
     under `frontend/src/types/`, following the existing typed-client-plus-tests pattern. Both
     pages are added to the existing `PageSwitcher`/`App.tsx` gated-by-login shell; no new
-    authentication path is introduced.
+    authentication path is introduced. A conversation is only ever entered from existing
+    context — a "Message" button on a non-anonymous post (`PostDetailPanel.tsx`) or clicking a
+    "new message" notification (`NotificationIndicator.tsx`) — never by typing a raw user ID; an
+    earlier version exposed a numeric-ID entry field, but it was unusable/undiscoverable and has
+    been replaced.
 
 23. **Notification indicator.** The session header (`App.tsx`'s `app-session-bar`) gains a
     live-updating unread-notification indicator (`NotificationIndicator`) fed by the SSE

@@ -281,9 +281,12 @@ Startup is deliberately split into stages:
   merging the result into the specific `posts` list entry in place. Only the just-created post is
   ever live-polled this way — older posts already went through their async window before the
   viewer ever saw them.
-- `frontend/src/pages/InboxPage.tsx` owns direct messaging: the conversation list, starting a new
-  conversation by recipient user ID, and opening a thread into
-  `components/messages/ConversationThread.tsx` for sending text/media replies.
+- `frontend/src/pages/MessagesPage.tsx` owns direct messaging: the conversation list and opening a
+  thread into `components/messages/ConversationThread.tsx` for sending text/media replies. A new
+  conversation starts from a "Message" button on a non-anonymous forum post (`ForumPage.tsx` passes
+  `onMessageUser` down to `PostDetailPanel.tsx`) or from clicking a "new message" notification —
+  both hand the target user off to `App.tsx`, which switches to this page with that conversation
+  pre-selected. There is no user-ID entry field; a target user must come from existing context.
 - `frontend/src/pages/CanonicalNetworkPage.tsx` and
   `frontend/src/pages/AccidentAttributionPage.tsx` are the two map explorer pages.
 - `frontend/src/components/route-jobs/` contains coordinate acquisition, job state rendering, and
@@ -291,11 +294,13 @@ Startup is deliberately split into stages:
 - `frontend/src/components/forum/` contains the post form, feed list, post detail/comment panel,
   shared vote-button component, and the media gallery that renders uploaded images/videos inline
   (reused by `components/messages/` for message attachments).
-- `frontend/src/components/messages/` contains the conversation list/start-conversation form and
-  the conversation thread/compose form.
+- `frontend/src/components/messages/` contains the conversation list and the conversation
+  thread/compose form.
 - `frontend/src/components/notifications/NotificationIndicator.tsx` is the session-header
   unread-count badge: opens one `EventSource` per signed-in session, refetches the unread count
-  on every open/reconnect, increments on each live event, and marks everything read on click.
+  on every open/reconnect, increments on each live event, and marks an item read on click.
+  Clicking a `new_dm` item additionally calls `onOpenMessage` (wired in `App.tsx` to
+  `MessagesPage.tsx`) to jump straight into that conversation.
 - `frontend/src/components/auth/` contains the signup/login/profile UI.
 - `frontend/src/components/canonical-network/` and
   `frontend/src/components/accident-attribution/` contain map filters and detail panels.
@@ -405,7 +410,7 @@ Startup is deliberately split into stages:
 - `frontend/src/**/*.test.tsx` and `frontend/src/api/*.test.ts` cover component and client
   behavior, including `frontend/src/pages/ForumPage.test.tsx` (feed rendering, filtering, paging,
   form validation, location capture, vote toggling, media upload, comments), `frontend/src/pages/
-  InboxPage.test.tsx`, `frontend/src/components/notifications/NotificationIndicator.test.tsx`
+  MessagesPage.test.tsx`, `frontend/src/components/notifications/NotificationIndicator.test.tsx`
   (mocked `EventSource`), `frontend/src/api/messages.test.ts`, and `frontend/src/lib/
   applyVote.test.ts`.
 - `frontend/e2e/route-journey.mjs` covers the browser route journey.
@@ -439,7 +444,7 @@ Startup is deliberately split into stages:
 | Change route candidate graph | `osrm/`, Compose OSRM service, compatibility manifest, OSRM tests |
 | Change explorer data | `backend/app/data_routes.py`, frontend explorer API/types/pages, fixture/data docs |
 | Change the forum (posts/comments/votes/media) | `backend/app/forum/routes.py`, `backend/app/forum/media_storage.py` for uploads, an Alembic migration, `frontend/src/pages/ForumPage.tsx` and `components/forum/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` for design intent and remaining scope |
-| Change direct messaging | `backend/app/messaging/routes.py` (reuses `backend/app/forum/media_storage.py`), `frontend/src/pages/InboxPage.tsx` and `components/messages/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` |
+| Change direct messaging | `backend/app/messaging/routes.py` (reuses `backend/app/forum/media_storage.py`), `frontend/src/pages/MessagesPage.tsx` and `components/messages/`, `docs/FORUM_FEATURE_PRD.md`/`forum-feature-tickets.md` |
 | Change live notifications | `backend/app/notifications/service.py` (create/publish) and `routes.py` (list/read/SSE stream), the `create_notification` call sites in `forum/routes.py` and `messaging/routes.py`, `frontend/src/components/notifications/NotificationIndicator.tsx` |
 | Add another long-lived streaming endpoint | Read `request_bounds.py`'s `GET`/`HEAD` exemption comment first — wrapping a `StreamingResponse` in the body-buffer-and-replay middleware pattern hangs the whole server; verify any new streaming endpoint against a concurrent request on a real Compose stack, not just unit tests |
 
