@@ -22,7 +22,11 @@ import type { CommentItem, DashboardSummary, HazardType, PostDetail, PostSummary
 const PAGE_SIZE = 20;
 const COMMENT_PAGE_SIZE = 30;
 
-export default function ForumPage(): JSX.Element {
+export interface ForumPageProps {
+  onMessageUser?: (userId: number, userEmail: string) => void;
+}
+
+export default function ForumPage(props: ForumPageProps): JSX.Element {
   const [posts, setPosts] = useState<PostSummary[]>([]);
   const [hazardType, setHazardType] = useState<HazardType | "">("");
   const [feedHasMore, setFeedHasMore] = useState(false);
@@ -259,6 +263,7 @@ export default function ForumPage(): JSX.Element {
           onAddComment={handleAddComment}
           onDeletePost={handleDeletePost}
           onLoadMoreComments={() => void handleLoadMoreComments()}
+          onMessageAuthor={props.onMessageUser}
         />
       ) : (
         <>

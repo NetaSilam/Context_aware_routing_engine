@@ -140,6 +140,29 @@ describe("NotificationIndicator", () => {
     expect(screen.queryByText("1")).toBeNull();
   });
 
+  it("opens the conversation with the sender when a new-message notification is clicked", async () => {
+    const user = userEvent.setup();
+    const items = [
+      { id: "n1", kind: "new_dm", payload: { sender_user_id: 7, sender_email: "driver@example.com" }, created_at: "2026-01-01T00:00:00Z", read_at: null },
+    ];
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("/api/notifications?")) return Promise.resolve(jsonResponse(notificationPage(1, items)));
+      if (url === "/api/notifications/n1/read" && init?.method === "POST") return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onOpenMessage = vi.fn();
+    render(<NotificationIndicator onOpenMessage={onOpenMessage} />);
+
+    MockEventSource.instances[0].onopen?.();
+    await screen.findByText("1");
+    await user.click(screen.getByRole("button", { name: /notifications/i }));
+    await user.click(await screen.findByText("New message from driver@example.com"));
+
+    expect(onOpenMessage).toHaveBeenCalledWith(7, "driver@example.com");
+  });
+
   it("marks all notifications read and resets the badge when 'Mark all as read' is clicked", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {

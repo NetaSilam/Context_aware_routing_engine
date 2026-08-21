@@ -8,6 +8,7 @@ import NotificationIndicator from "./components/notifications/NotificationIndica
 import AccidentAttributionPage from "./pages/AccidentAttributionPage";
 import CanonicalNetworkPage from "./pages/CanonicalNetworkPage";
 import ForumPage from "./pages/ForumPage";
+import MessagesPage, { type MessageTarget } from "./pages/MessagesPage";
 import NavigatePage from "./pages/NavigatePage";
 import PlanRoutePage from "./pages/PlanRoutePage";
 import type { UserProfile } from "./types/auth";
@@ -29,6 +30,12 @@ export default function App(props: AppProps): JSX.Element {
   const [navigationHandoff, setNavigationHandoff] = React.useState<NavigationHandoff | null>(
     () => loadNavigationSession()?.handoff ?? null,
   );
+  const [messageTarget, setMessageTarget] = React.useState<MessageTarget | null>(null);
+
+  function openConversationWith(userId: number, userEmail: string) {
+    setMessageTarget({ id: userId, email: userEmail });
+    setActivePage("messages");
+  }
 
   function startNavigation(handoff: NavigationHandoff) {
     setNavigationHandoff(handoff);
@@ -75,9 +82,16 @@ export default function App(props: AppProps): JSX.Element {
     "plan-route": props.pages?.["plan-route"] ?? (
       <PlanRoutePage user={user} onProfileUpdated={setUser} onStartNavigation={startNavigation} />
     ),
-    forum: props.pages?.forum ?? <ForumPage />,
+    forum: props.pages?.forum ?? <ForumPage onMessageUser={openConversationWith} />,
     "canonical-network": props.pages?.["canonical-network"] ?? <CanonicalNetworkPage />,
     "accident-attribution": props.pages?.["accident-attribution"] ?? <AccidentAttributionPage />,
+    messages: props.pages?.messages ?? (
+      <MessagesPage
+        user={user}
+        initialTarget={messageTarget}
+        onInitialTargetConsumed={() => setMessageTarget(null)}
+      />
+    ),
     navigate: props.pages?.navigate ?? (
       navigationHandoff ? (
         <NavigatePage handoff={navigationHandoff} onExit={exitNavigation} />
@@ -92,7 +106,7 @@ export default function App(props: AppProps): JSX.Element {
       <header className="site-header">
         <Logo variant="light" height={150} />
         <div className="site-header__session">
-          <NotificationIndicator />
+          <NotificationIndicator onOpenMessage={openConversationWith} />
           <span className="site-header__user">{user.email}</span>
           <button
             type="button"

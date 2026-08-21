@@ -28,7 +28,11 @@ function describeNotification(item: NotificationItem): string {
   }
 }
 
-export default function NotificationIndicator(): JSX.Element {
+interface NotificationIndicatorProps {
+  onOpenMessage?: (senderId: number, senderEmail: string) => void;
+}
+
+export default function NotificationIndicator(props: NotificationIndicatorProps): JSX.Element {
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<NotificationItem[]>([]);
@@ -82,6 +86,11 @@ export default function NotificationIndicator(): JSX.Element {
   }
 
   async function handleItemClick(item: NotificationItem) {
+    if (item.kind === "new_dm" && props.onOpenMessage) {
+      const senderId = Number(item.payload.sender_user_id);
+      const senderEmail = String(item.payload.sender_email ?? `User ${senderId}`);
+      if (Number.isInteger(senderId)) props.onOpenMessage(senderId, senderEmail);
+    }
     if (item.read_at) return;
     const now = new Date().toISOString();
     setItems((current) =>

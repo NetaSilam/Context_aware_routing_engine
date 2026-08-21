@@ -517,6 +517,33 @@ describe("ForumPage", () => {
     expect(await screen.findByText("Confirmed, cleared now.")).toBeTruthy();
   });
 
+  it("offers to message a non-anonymous report's author, and hands the click up to the caller", async () => {
+    const user = userEvent.setup();
+    const detail = { ...post, body: "Wide and deep, watch out.", media: [] };
+    const fetchMock = baseFetchMock();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.startsWith("/api/forum/posts?") && method === "GET") {
+        return Promise.resolve(jsonResponse({ items: [post], offset: 0, limit: 20, has_more: false }));
+      }
+      if (url === "/api/forum/me/dashboard") return Promise.resolve(jsonResponse(dashboard));
+      if (url === `/api/forum/posts/${post.id}`) return Promise.resolve(jsonResponse(detail));
+      if (url.startsWith(`/api/forum/posts/${post.id}/comments`) && method === "GET") {
+        return Promise.resolve(jsonResponse({ items: [], offset: 0, limit: 30, has_more: false }));
+      }
+      return Promise.resolve(jsonResponse({ detail: "unhandled" }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onMessageUser = vi.fn();
+    render(<ForumPage onMessageUser={onMessageUser} />);
+
+    await user.click(await screen.findByRole("button", { name: "Deep pothole on Route 4" }));
+    await user.click(await screen.findByRole("button", { name: "Message reporter@example.com" }));
+
+    expect(onMessageUser).toHaveBeenCalledWith(5, "reporter@example.com");
+  });
+
   it("shows severity and duplicate flags in the report detail view when classified", async () => {
     const user = userEvent.setup();
     const originalId = "88888888-8888-8888-8888-888888888888";

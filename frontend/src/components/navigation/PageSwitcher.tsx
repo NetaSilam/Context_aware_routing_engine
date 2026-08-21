@@ -3,6 +3,7 @@ export type AppPageId =
   | "forum"
   | "canonical-network"
   | "accident-attribution"
+  | "messages"
   | "navigate";
 
 interface PageSwitcherProps {
@@ -13,6 +14,7 @@ interface PageSwitcherProps {
 const PAGES: Array<{ id: AppPageId; label: string }> = [
   { id: "plan-route", label: "Plan a Route" },
   { id: "forum", label: "Hazard Reports" },
+  { id: "messages", label: "Messages" },
   { id: "accident-attribution", label: "Accident Attribution" },
 ];
 

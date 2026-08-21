@@ -15,6 +15,7 @@ interface PostDetailPanelProps {
   onAddComment: (body: string, isAnonymous: boolean, files: File[]) => Promise<void>;
   onDeletePost: () => Promise<void>;
   onLoadMoreComments: () => void;
+  onMessageAuthor?: (authorId: number, authorEmail: string) => void;
 }
 
 function authorLabel(isAnonymous: boolean, isOwn: boolean, email: string | null): string {
@@ -58,6 +59,15 @@ export default function PostDetailPanel(props: PostDetailPanelProps): JSX.Elemen
         {HAZARD_TYPE_LABELS[post.hazard_type]} · {authorLabel(post.is_anonymous, post.is_own, post.author_email)}
         {" "}· {new Date(post.created_at).toLocaleString()}
       </p>
+      {!post.is_anonymous && !post.is_own && post.author_id !== null && props.onMessageAuthor ? (
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={() => props.onMessageAuthor?.(post.author_id as number, post.author_email as string)}
+        >
+          Message {post.author_email}
+        </button>
+      ) : null}
       {post.llm_severity ? (
         <p
           className="forum-feed__severity"
